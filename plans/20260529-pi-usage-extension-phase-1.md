@@ -8,7 +8,7 @@ Use `/Users/lanh/Developer/pi-vault/pi-custom-providers` only as the repo-struct
 
 ## Scope
 
-- Scaffold a private TypeScript Pi extension package with:
+- Scaffold a TypeScript Pi extension package with:
   - `package.json`
   - `pnpm-lock.yaml`
   - `pnpm-workspace.yaml`
@@ -19,7 +19,7 @@ Use `/Users/lanh/Developer/pi-vault/pi-custom-providers` only as the repo-struct
   - `tests/`
 - Configure Pi loading with `pi: { "extensions": ["./src/index.ts"] }`.
 - Configure package metadata:
-  - `private: true`
+  - publishable package metadata for `@pi-vault/pi-usage`
   - `type: "module"`
   - `engines.node: ">=22"`
   - `files: ["src", "README.md"]`
@@ -87,10 +87,12 @@ Use `/Users/lanh/Developer/pi-vault/pi-custom-providers` only as the repo-struct
 
 ## Verification
 
-- Run `pnpm test`.
-- Run `pnpm typecheck`.
-- Run `pnpm check`.
-- Run `pnpm pack:dry-run`.
+- `pnpm test` passed.
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm check` passed.
+- `NPM_CONFIG_CACHE=/private/tmp/pi-usage-npm-cache pnpm pack:dry-run` passed.
+- Plain `pnpm pack:dry-run` can fail on this machine because `/Users/lanh/.npm` contains root-owned files; use the temp-cache command above until the external npm cache is fixed.
 - Load the extension locally in Pi and verify `/usage` opens the dashboard shell.
 - Verify `/usage --refresh` does not throw and marks the current render as refresh-requested.
 

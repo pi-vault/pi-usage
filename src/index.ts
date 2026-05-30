@@ -2,16 +2,28 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import {
+  Key,
+  matchesKey,
+  truncateToWidth,
+  type Component,
+} from "@earendil-works/pi-tui";
 import { createDefaultDeps, type UsageDeps } from "./deps.ts";
+import { buildInsights, scanOfflineUsage, type PeriodKey } from "./offline.ts";
 import { createProviderRegistry } from "./providers.ts";
-import type { UsageCoreState } from "./types.ts";
+import type {
+  AggregatedUsagePeriod,
+  UsageCoreState,
+  UsageWindow,
+} from "./types.ts";
 
 const GLOBAL_KEY = "__piUsage" as const;
 const READY_EVENT = "usage-core:ready";
 const UPDATE_CURRENT_EVENT = "usage-core:update-current";
+const PERIODS: UsageWindow[] = ["today", "thisWeek", "lastWeek", "allTime"];
 
 type GlobalUsageState = { initialized: true };
+type ScanToken = { cancelled: boolean };
 
 declare global {
   // eslint-disable-next-line no-var
@@ -30,10 +42,15 @@ function createInitialState(): UsageCoreState {
   return {
     refreshRequested: false,
     generatedAt: 0,
+    loading: false,
     offline: {
       providerId: "offline",
       totals: [],
+      periods: [],
+      scannedFiles: 0,
+      messageCount: 0,
     },
+    insights: [],
     currentProviderId: null,
     currentProviderSnapshot: null,
     providers: [],
@@ -53,65 +70,188 @@ function parseUsageArgs(
     .map((part) => part.trim())
     .filter(Boolean);
   const unknown = parts.filter((part) => part !== "--refresh");
-  if (unknown.length > 0) {
-    return { ok: false, unknown };
-  }
+  if (unknown.length > 0) return { ok: false, unknown };
   return { ok: true, refresh: parts.includes("--refresh") };
 }
 
 function widthSafe(line: string, width: number): string {
-  if (width <= 0 || line.length <= width) {
-    return line;
-  }
-  if (width <= 1) {
-    return "…";
-  }
-  return `${line.slice(0, width - 1)}…`;
+  return truncateToWidth(line, Math.max(0, width), "…");
 }
 
 function cloneState(state: UsageCoreState): UsageCoreState {
+  return JSON.parse(JSON.stringify(state)) as UsageCoreState;
+}
+
+function toRow(
+  key: string,
+  totals: {
+    sessions: Set<string>;
+    messages: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    tokens: number;
+    cost: number;
+  },
+) {
   return {
-    ...state,
-    offline: { ...state.offline, totals: [...state.offline.totals] },
-    providers: state.providers.map((provider) => ({
-      ...provider,
-      balances: [...provider.balances],
-    })),
-    diagnostics: [...state.diagnostics],
-    ...(state.usage
-      ? { usage: { ...state.usage, windows: [...state.usage.windows] } }
-      : {}),
-    compatibility: { ...state.compatibility },
+    key,
+    sessionCount: totals.sessions.size,
+    messageCount: totals.messages,
+    input: totals.input,
+    output: totals.output,
+    cache: totals.cacheRead + totals.cacheWrite,
+    tokens: totals.tokens,
+    cost: totals.cost,
   };
 }
 
+function buildPeriods(
+  result: Awaited<ReturnType<typeof scanOfflineUsage>>,
+): AggregatedUsagePeriod[] {
+  return PERIODS.map((key) => {
+    const source = result.periods[key as PeriodKey];
+    const providers = [...source.providers.entries()].map(
+      ([provider, totals]) => toRow(provider, totals),
+    );
+    const modelsByProvider: Record<string, ReturnType<typeof toRow>[]> = {};
+    for (const [provider, models] of source.modelsByProvider.entries()) {
+      modelsByProvider[provider] = [...models.entries()].map(
+        ([model, totals]) => toRow(model, totals),
+      );
+    }
+    providers.sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
+    for (const p of Object.keys(modelsByProvider)) {
+      modelsByProvider[p].sort(
+        (a, b) => b.cost - a.cost || b.tokens - a.tokens,
+      );
+    }
+    return {
+      key,
+      total: toRow("total", source.total),
+      providers,
+      modelsByProvider,
+    };
+  });
+}
+
 class UsageDashboardComponent implements Component {
+  private periodIndex = 0;
+  private rowIndex = 0;
+  private expandedProvider: string | null = null;
+  private showInsights = false;
+
   constructor(
     private readonly state: UsageCoreState,
     private readonly done: () => void,
+    private readonly cancelScan?: () => void,
   ) {}
 
-  render(width: number): string[] {
-    const lines = [
-      "Pi Usage Dashboard (Phase 1)",
-      "",
-      ...(this.state.refreshRequested ? ["diag: refresh requested", ""] : []),
-      "Offline stats: empty",
-      "",
-      ...this.state.providers.map(
-        (provider) =>
-          `- ${provider.providerLabel}: unavailable (${provider.phase})`,
-      ),
-      "",
-      "Press q or Esc to close.",
-    ];
+  private currentPeriod(): AggregatedUsagePeriod | undefined {
+    return this.state.offline.periods[this.periodIndex];
+  }
 
-    return lines.map((line) => widthSafe(line, Math.max(8, width)));
+  render(width: number): string[] {
+    const w = Math.max(8, width);
+    const lines: string[] = ["Pi Usage Dashboard (Phase 2)", ""];
+    const tabs = PERIODS.map((p, i) =>
+      i === this.periodIndex ? `[${p}]` : p,
+    ).join(" ");
+    lines.push(`Periods: ${tabs}`);
+    if (this.state.loading) lines.push("Loading session history...");
+    lines.push("");
+
+    if (this.showInsights) {
+      lines.push("Insights");
+      if (this.state.insights.length === 0) lines.push("No insights yet.");
+      for (const item of this.state.insights) {
+        lines.push(
+          `- ${item.label}: $${item.cost.toFixed(4)} (${item.detail})`,
+        );
+      }
+    } else {
+      const period = this.currentPeriod();
+      if (!period || period.total.messageCount === 0) {
+        lines.push("No local session usage found.");
+      } else {
+        lines.push(
+          `Total: $${period.total.cost.toFixed(4)} • ${period.total.tokens} tok • ${period.total.messageCount} msgs • ${period.total.sessionCount} sessions`,
+        );
+        const compact = w < 90;
+        const tiny = w < 65;
+        period.providers.forEach((row, index) => {
+          const selected = index === this.rowIndex ? ">" : " ";
+          const base = tiny
+            ? `${selected} ${row.key} $${row.cost.toFixed(2)} ${row.tokens}t`
+            : compact
+              ? `${selected} ${row.key} $${row.cost.toFixed(2)} ${row.tokens}t ${row.input}in/${row.output}out`
+              : `${selected} ${row.key} $${row.cost.toFixed(2)} tok:${row.tokens} in:${row.input} out:${row.output} cache:${row.cache} msg:${row.messageCount} sess:${row.sessionCount}`;
+          lines.push(base);
+          if (this.expandedProvider === row.key) {
+            for (const model of period.modelsByProvider[row.key] ?? []) {
+              lines.push(
+                tiny
+                  ? `    - ${model.key} $${model.cost.toFixed(2)}`
+                  : `    - ${model.key} $${model.cost.toFixed(2)} tok:${model.tokens} msg:${model.messageCount}`,
+              );
+            }
+          }
+        });
+      }
+    }
+
+    lines.push("");
+    for (const provider of this.state.providers.filter(
+      (p) => p.providerId !== "offline",
+    )) {
+      lines.push(
+        `- ${provider.providerLabel}: unavailable (${provider.phase})`,
+      );
+    }
+    lines.push("");
+    lines.push(
+      "Tab/←→ period • ↑↓ row • Enter expand • v insights • q/Esc close",
+    );
+    return lines.map((line) => widthSafe(line, w));
   }
 
   handleInput(data: string): void {
-    if (data === "q" || data === "\u001B") {
+    const period = this.currentPeriod();
+    if (data === "q" || matchesKey(data, Key.escape)) {
+      this.cancelScan?.();
       this.done();
+      return;
+    }
+    if (data === "v") {
+      this.showInsights = !this.showInsights;
+      return;
+    }
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+      this.periodIndex = (this.periodIndex + 1) % PERIODS.length;
+      this.rowIndex = 0;
+      this.expandedProvider = null;
+      return;
+    }
+    if (matchesKey(data, Key.left)) {
+      this.periodIndex =
+        (this.periodIndex - 1 + PERIODS.length) % PERIODS.length;
+      this.rowIndex = 0;
+      this.expandedProvider = null;
+      return;
+    }
+    if (!period) return;
+    if (matchesKey(data, Key.down)) {
+      this.rowIndex = Math.min(
+        this.rowIndex + 1,
+        Math.max(0, period.providers.length - 1),
+      );
+    }
+    if (matchesKey(data, Key.up)) this.rowIndex = Math.max(0, this.rowIndex - 1);
+    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+      const p = period.providers[this.rowIndex]?.key;
+      if (!p) return;
+      this.expandedProvider = this.expandedProvider === p ? null : p;
     }
   }
 
@@ -121,9 +261,11 @@ class UsageDashboardComponent implements Component {
 async function openDashboard(
   ctx: ExtensionCommandContext,
   state: UsageCoreState,
+  cancelScan?: () => void,
 ): Promise<void> {
   await ctx.ui.custom<void>(
-    (_tui, _theme, _keys, done) => new UsageDashboardComponent(state, done),
+    (_tui, _theme, _keys, done) =>
+      new UsageDashboardComponent(state, done, cancelScan),
   );
 }
 
@@ -132,13 +274,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
   const injectedMode = Boolean(options?.deps);
 
   return function usageExtension(pi: ExtensionAPI): void {
-    if (!injectedMode && globalThis[GLOBAL_KEY]) {
-      return;
-    }
-
-    if (!injectedMode) {
-      globalThis[GLOBAL_KEY] = { initialized: true };
-    }
+    if (!injectedMode && globalThis[GLOBAL_KEY]) return;
+    if (!injectedMode) globalThis[GLOBAL_KEY] = { initialized: true };
 
     const state = createInitialState();
     const providers = createProviderRegistry(deps);
@@ -147,14 +284,41 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       pi.events.emit(name, { state: cloneState(state) });
     };
 
-    const bootstrap = async () => {
-      state.providers = (
-        await Promise.all(
-          providers.map(async (provider) => (await provider.fetch()).snapshot),
-        )
-      ).map((snapshot) => snapshot);
+    let providerLoad: Promise<void> | null = null;
+
+    const populateProviders = async () => {
+      providerLoad ??= Promise.all(
+        providers.map(async (provider) => (await provider.fetch()).snapshot),
+      ).then((snapshots) => {
+        state.providers = snapshots;
+      });
+      await providerLoad;
+    };
+
+    const refreshOffline = async (refresh: boolean, token?: ScanToken) => {
+      state.loading = true;
+      emit(UPDATE_CURRENT_EVENT);
+      const result = await scanOfflineUsage(deps, {
+        refresh,
+        shouldCancel: () => token?.cancelled === true,
+      });
+      if (token?.cancelled) {
+        state.loading = false;
+        emit(UPDATE_CURRENT_EVENT);
+        return;
+      }
+      state.offline.periods = buildPeriods(result);
+      state.offline.scannedFiles = result.scannedFiles;
+      state.offline.messageCount = result.turns.length;
+      state.insights = buildInsights(result.turns);
       state.generatedAt = deps.now();
-      state.diagnostics = ["phase-1 shell ready"];
+      state.loading = false;
+    };
+
+    const bootstrap = async () => {
+      await populateProviders();
+      await refreshOffline(false);
+      state.diagnostics = ["phase-2 offline dashboard ready"];
       emit(READY_EVENT);
     };
 
@@ -163,11 +327,9 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     });
 
     pi.registerCommand("usage", {
-      description: "Open the usage dashboard shell",
+      description: "Open the usage dashboard",
       handler: async (args, ctx) => {
-        if (!ctx.hasUI) {
-          return;
-        }
+        if (!ctx.hasUI) return;
 
         const parsed = parseUsageArgs(args);
         if (!parsed.ok) {
@@ -184,7 +346,17 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           emit(UPDATE_CURRENT_EVENT);
         }
 
-        await openDashboard(ctx, state);
+        await populateProviders();
+        const scanToken: ScanToken = { cancelled: false };
+        const shouldScan =
+          parsed.refresh || (state.offline.periods.length === 0 && !state.loading);
+        const scan = shouldScan
+          ? refreshOffline(parsed.refresh, scanToken)
+          : undefined;
+        await openDashboard(ctx, state, () => {
+          scanToken.cancelled = true;
+        });
+        await scan;
       },
     });
 

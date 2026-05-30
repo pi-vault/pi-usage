@@ -5,7 +5,7 @@ export type ProviderId =
   | "opencode-go"
   | "command-code";
 
-export type UsageWindow = "today" | "week" | "month";
+export type UsageWindow = "today" | "thisWeek" | "lastWeek" | "allTime";
 
 export interface ProviderBalance {
   label: string;
@@ -37,9 +37,30 @@ export interface UsageProviderAdapter {
   fetch(): Promise<ProviderFetchOutcome>;
 }
 
+export interface AggregatedUsageRow {
+  key: string;
+  sessionCount: number;
+  messageCount: number;
+  input: number;
+  output: number;
+  cache: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface AggregatedUsagePeriod {
+  key: UsageWindow;
+  total: AggregatedUsageRow;
+  providers: AggregatedUsageRow[];
+  modelsByProvider: Record<string, AggregatedUsageRow[]>;
+}
+
 export interface OfflineUsageState {
   providerId: "offline";
   totals: ProviderBalance[];
+  periods: AggregatedUsagePeriod[];
+  scannedFiles: number;
+  messageCount: number;
 }
 
 export interface RateWindow {
@@ -54,10 +75,18 @@ export interface CurrentUsageCompatibility {
   windows: RateWindow[];
 }
 
+export interface UsageInsight {
+  label: string;
+  cost: number;
+  detail: string;
+}
+
 export interface UsageCoreState {
   refreshRequested: boolean;
   generatedAt: number;
+  loading: boolean;
   offline: OfflineUsageState;
+  insights: UsageInsight[];
   currentProviderId: ProviderId | null;
   currentProviderSnapshot: ProviderUsageSnapshot | null;
   providers: ProviderUsageSnapshot[];

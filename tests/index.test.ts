@@ -12,14 +12,24 @@ type PiMock = {
     emit: ReturnType<typeof vi.fn>;
   };
   registerCommandCalls: string[];
-  registerCommand: (name: string, options: { handler: (args: string, ctx: CommandContext) => Promise<void> }) => void;
+  registerCommand: (
+    name: string,
+    options: { handler: (args: string, ctx: CommandContext) => Promise<void> },
+  ) => void;
   on: (name: string, handler: (...args: unknown[]) => void) => void;
-  runCommand: (name: string, args: string, ctx: CommandContext) => Promise<void>;
+  runCommand: (
+    name: string,
+    args: string,
+    ctx: CommandContext,
+  ) => Promise<void>;
   trigger: (name: string) => void;
 };
 
 function createPiMock(): PiMock {
-  const commands = new Map<string, { handler: (args: string, ctx: CommandContext) => Promise<void> }>();
+  const commands = new Map<
+    string,
+    { handler: (args: string, ctx: CommandContext) => Promise<void> }
+  >();
   const events = new Map<string, Array<(...args: unknown[]) => void>>();
   const emitted: Array<{ name: string; payload: unknown }> = [];
   const emit = vi.fn((name: string, payload: unknown) => {
@@ -57,9 +67,19 @@ function createPiMock(): PiMock {
 
 function createUiMock() {
   const notify = vi.fn();
-  let component: { render: (width: number) => string[]; handleInput?: (data: string) => void } | undefined;
+  let component:
+    | {
+        render: (width: number) => string[];
+        handleInput?: (data: string) => void;
+      }
+    | undefined;
   const custom = vi.fn(async (factory: (...args: unknown[]) => unknown) => {
-    component = factory({ terminal: { columns: 80 } }, {}, {}, () => undefined) as typeof component;
+    component = factory(
+      { terminal: { columns: 80 } },
+      {},
+      {},
+      () => undefined,
+    ) as typeof component;
   });
   return {
     notify,
@@ -73,9 +93,18 @@ async function waitForMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function waitForEvent(pi: PiMock, name: string): Promise<void> {
+  for (let i = 0; i < 50; i += 1) {
+    if (pi.emitted.some((event) => event.name === name)) return;
+    await waitForMicrotasks();
+  }
+}
+
 describe("package config", () => {
   it("points pi.extensions to src/index.ts", () => {
-    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { pi: { extensions: string[] } };
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      pi: { extensions: string[] };
+    };
     expect(pkg.pi.extensions).toEqual(["./src/index.ts"]);
   });
 });
@@ -129,14 +158,21 @@ describe("usage extension", () => {
 
     await pi.runCommand("usage", "--refresh", { hasUI: true, ui });
     expect(ui.custom).toHaveBeenCalled();
-    expect(ui.render()).toContain("diag: refresh requested");
+    expect(ui.render().join("\n")).toContain("Periods:");
 
-    const updateCalls = pi.events.emit.mock.calls.filter((call) => call[0] === "usage-core:update-current");
+    const updateCalls = pi.events.emit.mock.calls.filter(
+      (call) => call[0] === "usage-core:update-current",
+    );
     expect(updateCalls.length).toBeGreaterThan(0);
 
     const hasRefreshPayload = updateCalls.some((call) => {
-      const payload = call[1] as { state: { refreshRequested: boolean; diagnostics: string[] } };
-      return payload.state.refreshRequested && payload.state.diagnostics.includes("refresh requested");
+      const payload = call[1] as {
+        state: { refreshRequested: boolean; diagnostics: string[] };
+      };
+      return (
+        payload.state.refreshRequested &&
+        payload.state.diagnostics.includes("refresh requested")
+      );
     });
 
     expect(hasRefreshPayload).toBe(true);
@@ -175,12 +211,11 @@ describe("usage extension", () => {
     createUsageExtension({
       deps: {
         fetch: forbidden as never,
-        readFile: forbidden as never,
         writeFile: forbidden as never,
-        readDir: forbidden as never,
         mkdir: forbidden as never,
         rename: forbidden as never,
         runCommand: forbidden as never,
+        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
         now: () => 1,
       },
     })(pi as never);
@@ -191,12 +226,34 @@ describe("usage extension", () => {
 
     expect(ui.render()).toEqual(
       expect.arrayContaining([
-        "Pi Usage Dashboard (Phase 1)",
-        "Offline stats: empty",
+        "Pi Usage Dashboard (Phase 2)",
+        "No local session usage found.",
         "- OpenAI/Codex: unavailable (Phase 3)",
       ]),
     );
     expect(forbidden).not.toHaveBeenCalled();
+  });
+
+  it("/usage shows provider placeholders before session_start", async () => {
+    const pi = createPiMock();
+    const ui = createUiMock();
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+      },
+    })(pi as never);
+
+    await pi.runCommand("usage", "", { hasUI: true, ui });
+
+    expect(ui.render()).toEqual(
+      expect.arrayContaining([
+        "- OpenAI/Codex: unavailable (Phase 3)",
+        "- MiniMax: unavailable (Phase 4)",
+        "- OpenCode Go: unavailable (Phase 5)",
+        "- Command Code: unavailable (Phase 6)",
+      ]),
+    );
   });
 
   it("placeholder providers cover all planned providers and are unavailable", async () => {
@@ -211,16 +268,27 @@ describe("usage extension", () => {
       "Command Code",
     ]);
 
-    const snapshots = await Promise.all(providers.map(async (provider) => (await provider.fetch()).snapshot));
-    expect(snapshots.every((snapshot) => snapshot.available === false)).toBe(true);
-    expect(snapshots.every((snapshot) => snapshot.diagnostic.includes("Phase"))).toBe(true);
+    const snapshots = await Promise.all(
+      providers.map(async (provider) => (await provider.fetch()).snapshot),
+    );
+    expect(snapshots.every((snapshot) => snapshot.available === false)).toBe(
+      true,
+    );
+    expect(
+      snapshots.every((snapshot) => snapshot.diagnostic.includes("Phase")),
+    ).toBe(true);
   });
 
   it("emits state payload entries", async () => {
     const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+      },
+    })(pi as never);
     pi.trigger("session_start");
-    await waitForMicrotasks();
+    await waitForEvent(pi, "usage-core:ready");
     expect(pi.events.emit).toHaveBeenCalledWith(
       "usage-core:ready",
       expect.objectContaining({ state: expect.any(Object) }),
@@ -229,12 +297,19 @@ describe("usage extension", () => {
 
   it("emits compatibility fields that clear existing powerbar consumers", async () => {
     const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+      },
+    })(pi as never);
     pi.trigger("session_start");
-    await waitForMicrotasks();
+    await waitForEvent(pi, "usage-core:ready");
 
     const ready = pi.emitted.find((event) => event.name === "usage-core:ready");
-    const state = (ready?.payload as { state: { provider?: string; usage?: unknown } }).state;
+    const state = (
+      ready?.payload as { state: { provider?: string; usage?: unknown } }
+    ).state;
 
     expect(state.provider).toBeUndefined();
     expect(state.usage).toBeUndefined();
