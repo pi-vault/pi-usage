@@ -190,10 +190,7 @@ export async function scanOfflineUsage(
   options?: { refresh?: boolean; shouldCancel?: () => boolean },
 ): Promise<OfflineScanResult> {
   void options?.refresh;
-  const sessionsRoot = join(
-    deps.env.PI_CODING_AGENT_DIR ?? join(deps.homeDir(), ".config", "pi"),
-    "sessions",
-  );
+  const sessionsRoot = join(deps.agentDir(), "sessions");
   const periods: Record<PeriodKey, PeriodStats> = {
     today: {
       total: mkTotals("total"),
@@ -308,7 +305,9 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
     .filter((turn) => {
       const activeSessions = new Set<string>();
       for (const candidate of turns) {
-        if (Math.abs(candidate.timestamp - turn.timestamp) <= parallelWindowMs) {
+        if (
+          Math.abs(candidate.timestamp - turn.timestamp) <= parallelWindowMs
+        ) {
           activeSessions.add(candidate.sessionId);
         }
         if (activeSessions.size >= 4) return true;

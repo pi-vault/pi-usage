@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { createDefaultDeps, type UsageDeps } from "./deps.ts";
 import { buildInsights, scanOfflineUsage, type PeriodKey } from "./offline.ts";
-import { createProviderRegistry } from "./providers.ts";
+import { createProviderRegistry, providerCacheDir } from "./providers.ts";
 import type {
   AggregatedUsagePeriod,
   UsageCoreState,
@@ -62,6 +62,18 @@ function createInitialState(): UsageCoreState {
   };
 }
 
+export function detectProviderFromModel(
+  model: { provider?: string; id?: string; name?: string } | undefined,
+): "openai-codex" | undefined {
+  if (!model) return undefined;
+  const p = (model.provider ?? "").trim().toLowerCase();
+  if (p === "openai-codex") return "openai-codex";
+  if (p) return undefined;
+  const n = (model.id ?? model.name ?? "").toLowerCase();
+  if (n.includes("codex")) return "openai-codex";
+  return undefined;
+}
+
 function parseUsageArgs(
   args: string,
 ): { ok: true; refresh: boolean } | { ok: false; unknown: string[] } {
@@ -76,6 +88,12 @@ function parseUsageArgs(
 
 function widthSafe(line: string, width: number): string {
   return truncateToWidth(line, Math.max(0, width), "…");
+}
+
+function formatAge(ageMs: number | undefined): string {
+  if (ageMs == null) return "";
+  if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s old`;
+  return `${Math.floor(ageMs / 60_000)}m old`;
 }
 
 function cloneState(state: UsageCoreState): UsageCoreState {
@@ -154,7 +172,7 @@ class UsageDashboardComponent implements Component {
 
   render(width: number): string[] {
     const w = Math.max(8, width);
-    const lines: string[] = ["Pi Usage Dashboard (Phase 2)", ""];
+    const lines: string[] = ["Pi Usage Dashboard", ""];
     const tabs = PERIODS.map((p, i) =>
       i === this.periodIndex ? `[${p}]` : p,
     ).join(" ");
@@ -205,9 +223,21 @@ class UsageDashboardComponent implements Component {
     for (const provider of this.state.providers.filter(
       (p) => p.providerId !== "offline",
     )) {
+      const status =
+        provider.status === "unavailable" ? "unavailable" : provider.status;
+      const diag = provider.diagnostics[0] ?? provider.diagnostic;
+      const age = formatAge(provider.staleAgeMs);
       lines.push(
-        `- ${provider.providerLabel}: unavailable (${provider.phase})`,
+        `- ${provider.providerLabel}: ${status} (${provider.sourceLabel})${age ? ` • ${age}` : ""}${diag ? ` • ${diag}` : ""}`,
       );
+      if (provider.providerId === "openai-codex") {
+        for (const w of provider.windows) {
+          const text = w.unavailableReason
+            ? `${w.label}: ${w.unavailableReason}`
+            : `${w.label}: ${w.usedPercent}%`;
+          lines.push(`    - ${text}`);
+        }
+      }
     }
     lines.push("");
     lines.push(
@@ -247,7 +277,8 @@ class UsageDashboardComponent implements Component {
         Math.max(0, period.providers.length - 1),
       );
     }
-    if (matchesKey(data, Key.up)) this.rowIndex = Math.max(0, this.rowIndex - 1);
+    if (matchesKey(data, Key.up))
+      this.rowIndex = Math.max(0, this.rowIndex - 1);
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
       const p = period.providers[this.rowIndex]?.key;
       if (!p) return;
@@ -284,15 +315,75 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       pi.events.emit(name, { state: cloneState(state) });
     };
 
-    let providerLoad: Promise<void> | null = null;
+    let _activeModelId: string | undefined;
+    let providerRefresh: Promise<void> | null = null;
+    let providerForcePending = false;
+    let periodicRefresh: NodeJS.Timeout | undefined;
+    let cacheWatcher: { close: () => void } | undefined;
 
-    const populateProviders = async () => {
-      providerLoad ??= Promise.all(
-        providers.map(async (provider) => (await provider.fetch()).snapshot),
-      ).then((snapshots) => {
-        state.providers = snapshots;
-      });
-      await providerLoad;
+    const syncCompatibility = () => {
+      const current =
+        state.providers.find((s) => s.providerId === state.currentProviderId) ??
+        null;
+      state.currentProviderSnapshot = current;
+      const hasCompatibilityWindows =
+        current?.providerId === "openai-codex" &&
+        current.windows.some(
+          (window) =>
+            (window.key === "fiveHour" || window.key === "weekly") &&
+            !window.unavailableReason,
+        );
+      state.compatibility.currentLiveProviderId =
+        hasCompatibilityWindows && current ? current.providerId : null;
+      state.compatibility.currentLiveProviderSnapshot = state.compatibility
+        .currentLiveProviderId
+        ? current
+        : null;
+      if (state.compatibility.currentLiveProviderId && current) {
+        state.provider = current.providerLabel;
+        state.usage = {
+          provider: current.providerId,
+          displayName: current.providerLabel,
+          windows: current.windows
+            .filter((w) => w.key === "fiveHour" || w.key === "weekly")
+            .filter((w) => !w.unavailableReason)
+            .map((w) => ({ label: w.label, usedPercent: w.usedPercent })),
+        };
+      } else {
+        state.provider = undefined;
+        state.usage = undefined;
+      }
+    };
+
+    const populateProviders = async (force = false, signal?: AbortSignal) => {
+      if (providerRefresh) {
+        if (force) providerForcePending = true;
+        await providerRefresh;
+        if (force && providerForcePending) {
+          providerForcePending = false;
+          await populateProviders(true, signal);
+        }
+        return;
+      }
+      providerRefresh = Promise.all(
+        providers.map(
+          async (provider) =>
+            (
+              await provider.fetch({
+                force,
+                signal,
+              })
+            ).snapshot,
+        ),
+      )
+        .then((snapshots) => {
+          state.providers = snapshots;
+          syncCompatibility();
+        })
+        .finally(() => {
+          providerRefresh = null;
+        });
+      return providerRefresh;
     };
 
     const refreshOffline = async (refresh: boolean, token?: ScanToken) => {
@@ -316,14 +407,71 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     };
 
     const bootstrap = async () => {
-      await populateProviders();
-      await refreshOffline(false);
-      state.diagnostics = ["phase-2 offline dashboard ready"];
+      await Promise.all([populateProviders(false), refreshOffline(false)]);
+      state.diagnostics = ["phase-3 live runtime ready"];
       emit(READY_EVENT);
     };
 
-    pi.on("session_start", () => {
+    const updateModelContext = (
+      model:
+        | {
+            provider?: string;
+            id?: string;
+            name?: string;
+          }
+        | undefined,
+    ) => {
+      state.currentProviderId = detectProviderFromModel(model) ?? null;
+      _activeModelId = model?.id ?? model?.name;
+      syncCompatibility();
+    };
+
+    const emitProviderUpdate = async (force = false, signal?: AbortSignal) => {
+      await populateProviders(force, signal);
+      emit(UPDATE_CURRENT_EVENT);
+    };
+
+    const startLiveRuntime = () => {
+      if (!periodicRefresh) {
+        periodicRefresh = deps.setInterval(() => {
+          void emitProviderUpdate(false).catch(() => undefined);
+        }, 60_000);
+        deps.unrefTimer(periodicRefresh);
+      }
+      if (!cacheWatcher) {
+        void deps
+          .mkdir(providerCacheDir(deps), { recursive: true })
+          .then(() => {
+            cacheWatcher = deps.watch(providerCacheDir(deps), (filename) => {
+              if (filename !== "openai-codex.json") return;
+              void emitProviderUpdate(false).catch(() => undefined);
+            });
+          })
+          .catch(() => undefined);
+      }
+    };
+
+    pi.on("session_start", (_event, ctx) => {
+      updateModelContext(ctx.model);
+      startLiveRuntime();
       void bootstrap();
+    });
+
+    pi.on("model_select", (event, ctx) => {
+      updateModelContext(event.model);
+      if (state.currentProviderId === "openai-codex") {
+        void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
+      } else {
+        emit(UPDATE_CURRENT_EVENT);
+      }
+    });
+    pi.on("turn_start", (_event, ctx) => {
+      updateModelContext(ctx.model);
+      emit(UPDATE_CURRENT_EVENT);
+    });
+    pi.on("turn_end", (_event, ctx) => {
+      updateModelContext(ctx.model);
+      emit(UPDATE_CURRENT_EVENT);
     });
 
     pi.registerCommand("usage", {
@@ -346,10 +494,11 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           emit(UPDATE_CURRENT_EVENT);
         }
 
-        await populateProviders();
+        await populateProviders(parsed.refresh);
         const scanToken: ScanToken = { cancelled: false };
         const shouldScan =
-          parsed.refresh || (state.offline.periods.length === 0 && !state.loading);
+          parsed.refresh ||
+          (state.offline.periods.length === 0 && !state.loading);
         const scan = shouldScan
           ? refreshOffline(parsed.refresh, scanToken)
           : undefined;
@@ -361,6 +510,10 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     });
 
     pi.on("session_shutdown", () => {
+      if (periodicRefresh) deps.clearInterval(periodicRefresh);
+      periodicRefresh = undefined;
+      cacheWatcher?.close();
+      cacheWatcher = undefined;
       delete globalThis[GLOBAL_KEY];
     });
   };

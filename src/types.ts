@@ -13,6 +13,18 @@ export interface ProviderBalance {
   unit: string;
 }
 
+export type LiveStatus = "live" | "cached" | "stale" | "unavailable";
+export type LiveSourceKind = "live" | "cache" | "none";
+
+export interface LiveUsageWindow {
+  key: string;
+  label: string;
+  usedPercent: number;
+  resetAt?: number;
+  windowDurationMins?: number;
+  unavailableReason?: string;
+}
+
 export interface ProviderUsageSnapshot {
   providerId: ProviderId;
   providerLabel: string;
@@ -21,12 +33,21 @@ export interface ProviderUsageSnapshot {
   diagnostic: string;
   fetchedAt: number;
   balances: ProviderBalance[];
+  status: LiveStatus;
+  sourceLabel: string;
+  sourceKind: LiveSourceKind;
+  expiresAt?: number;
+  staleAgeMs?: number;
+  windows: LiveUsageWindow[];
+  diagnostics: string[];
 }
 
 export type ProviderFetchStrategy = "offline" | "api";
 
 export interface ProviderFetchOutcome {
   snapshot: ProviderUsageSnapshot;
+  shouldWriteCache: boolean;
+  nextRetryAt?: number;
 }
 
 export interface UsageProviderAdapter {
@@ -34,7 +55,10 @@ export interface UsageProviderAdapter {
   label: string;
   strategy: ProviderFetchStrategy;
   phase: string;
-  fetch(): Promise<ProviderFetchOutcome>;
+  fetch(input?: {
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<ProviderFetchOutcome>;
 }
 
 export interface AggregatedUsageRow {
