@@ -52,7 +52,7 @@ describe("offline scanner", () => {
     const deps = createDefaultDeps();
     const result = await scanOfflineUsage({
       ...deps,
-      env: { ...deps.env, PI_CODING_AGENT_DIR: root },
+      agentDir: () => root,
       now: () => now,
     });
     expect(result.turns).toHaveLength(2);
@@ -82,7 +82,7 @@ describe("offline scanner", () => {
     const deps = createDefaultDeps();
     const result = await scanOfflineUsage({
       ...deps,
-      env: { ...deps.env, PI_CODING_AGENT_DIR: root },
+      agentDir: () => root,
     });
     expect(result.turns).toHaveLength(1);
     rmSync(root, { recursive: true, force: true });
@@ -92,7 +92,7 @@ describe("offline scanner", () => {
     const deps = createDefaultDeps();
     const result = await scanOfflineUsage({
       ...deps,
-      env: { ...deps.env, PI_CODING_AGENT_DIR: "/definitely/missing" },
+      agentDir: () => "/definitely/missing",
     });
     expect(result.turns).toHaveLength(0);
   });
