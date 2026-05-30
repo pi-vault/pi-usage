@@ -8,6 +8,8 @@ Make `/usage` useful without network or provider credentials by reading Pi sessi
 
 Implement the offline dashboard on top of the current Phase 1 extension shell. Real Pi session records use `type: "message"` with top-level `id` and `timestamp`, nested `message.role`, `message.provider`, `message.model`, and `message.usage`. Usage includes `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens`, and `cost`.
 
+Implementation review completed after Phase 2 work: parser/scanner, aggregation, dashboard rendering, keyboard navigation, insights, provider placeholders, and verification checks are implemented. The remaining manual item is a local Pi smoke test.
+
 ## Scope
 
 - Resolve the session root as `${PI_CODING_AGENT_DIR ?? homeDir() + "/.config/pi"}/sessions`.
@@ -37,12 +39,13 @@ Implement the offline dashboard on top of the current Phase 1 extension shell. R
   - Enter/Space for provider expansion
   - `v` for insights
   - `q` / Esc to close
-- Add cancellable loading and periodic event-loop yielding while scanning large histories.
+- Use `@earendil-works/pi-tui` key helpers for keyboard handling and `truncateToWidth` for width-safe rendering.
+- Add cancellable loading and periodic event-loop yielding while scanning large histories; closing the dashboard cancels any in-flight scan.
 - Keep `/usage --refresh`; in Phase 2 it forces a fresh offline scan instead of using any in-memory scan result.
 - Keep `usage-core:ready` and `usage-core:update-current` event payloads as `{ state }`.
-- Keep provider cards for OpenAI/Codex, MiniMax, OpenCode Go, and Command Code visible as unavailable future phases.
+- Keep provider cards for OpenAI/Codex, MiniMax, OpenCode Go, and Command Code visible as unavailable future phases, including when `/usage` runs before `session_start`.
 - Add insights view:
-  - parallel sessions: cost while 4+ sessions were active within +/- 2 minutes
+  - parallel sessions: cost from turns where 4+ distinct sessions were active within +/- 2 minutes
   - large context: cost from turns over 150k context tokens
   - large uncached prompts: cost from turns over 100k fresh input tokens
   - long sessions: cost from sessions active for 8+ hours
@@ -66,6 +69,7 @@ Implement the offline dashboard on top of the current Phase 1 extension shell. R
 - Keyboard input changes period, selection, expansion, insights mode, and close state as specified.
 - Insights view renders meaningful results when enough data exists and clear empty states when it does not.
 - `/usage --refresh` triggers a fresh offline scan path.
+- Future provider placeholders render before and after `session_start`.
 
 ## Test Coverage
 
@@ -85,7 +89,7 @@ Implement the offline dashboard on top of the current Phase 1 extension shell. R
   - cost totals from `usage.cost`
   - empty data behavior
 - Insights tests:
-  - parallel sessions with 4+ active sessions within +/- 2 minutes
+  - parallel sessions with 4+ distinct active sessions within +/- 2 minutes
   - large context over 150k total context tokens
   - large uncached prompts over 100k fresh input tokens
   - long sessions active for 8+ hours
@@ -99,11 +103,12 @@ Implement the offline dashboard on top of the current Phase 1 extension shell. R
 
 ## Verification
 
-- Run `pnpm test`.
-- Run `pnpm typecheck`.
-- Run `pnpm lint`.
-- Run `pnpm check` if the narrow checks pass.
-- Optionally run `pnpm pack:dry-run`.
+- `pnpm test` passed with 19 tests.
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm check` passed.
+- `NPM_CONFIG_CACHE=/private/tmp/pi-usage-npm-cache pnpm pack:dry-run` passed.
+- Plain `pnpm pack:dry-run` hit root-owned files in `/Users/lanh/.npm`; this is an external npm cache permission issue, not a repo failure.
 - Load the extension in Pi and verify `/usage` displays local session usage offline.
 
 ## Out Of Scope
