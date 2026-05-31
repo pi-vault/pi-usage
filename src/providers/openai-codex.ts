@@ -2,7 +2,12 @@ import { join } from "node:path";
 import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../constants.ts";
 import type { UsageDeps } from "../deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../types.ts";
-import { fetchWithLiveRuntime, readJsonSafe, retryAfterMs } from "./runtime.ts";
+import {
+  fetchWithLiveRuntime,
+  parseEpochMs,
+  readJsonSafe,
+  retryAfterMs,
+} from "./runtime.ts";
 
 async function resolveCodexAuth(
   deps: UsageDeps,
@@ -76,7 +81,7 @@ function parseWindow(
     typeof raw.limit_window_seconds === "number"
       ? raw.limit_window_seconds
       : undefined;
-  const resetAt = typeof raw.reset_at === "number" ? raw.reset_at : undefined;
+  const resetAt = parseEpochMs(raw.reset_at);
   return {
     key,
     label,

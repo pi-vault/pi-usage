@@ -254,10 +254,12 @@ describe("usage extension", () => {
 
     expect(ui.render()).toEqual(
       expect.arrayContaining([
-        "Pi Usage Dashboard",
+        "Usage Statistics",
         "No local session usage found.",
+        "Current Usage",
+        "OpenAI/Codex • unavailable • 0s old",
+        "No live usage details.",
         "* OpenAI/Codex: Live cache is unavailable.",
-        "- OpenAI/Codex • unavailable (Unavailable) • 0s old",
       ]),
     );
     expect(forbidden).toHaveBeenCalled();
@@ -276,10 +278,14 @@ describe("usage extension", () => {
     await pi.runCommand("usage", "", { hasUI: true, ui });
 
     const rendered = ui.render().join("\n");
+    expect(rendered).toContain("Current Usage");
+    expect(rendered).toContain(
+      "[OpenAI/Codex]    MiniMax    OpenCode Go    Command Code",
+    );
+    expect(rendered).toContain("OpenAI/Codex • unavailable • 0s old");
+    expect(rendered).toContain("No live usage details.");
     expect(rendered).toContain("* OpenAI/Codex: Live cache is unavailable.");
     expect(rendered).toContain("* MiniMax: Live cache is unavailable.");
-    expect(rendered).toContain("- OpenCode Go • unavailable (Unavailable) • 0s old");
-    expect(rendered).toContain("- Command Code • unavailable (Unavailable) • 0s old");
   });
 
   it("placeholder providers cover all planned providers and are unavailable", async () => {
