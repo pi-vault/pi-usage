@@ -64,13 +64,15 @@ function createInitialState(): UsageCoreState {
 
 export function detectProviderFromModel(
   model: { provider?: string; id?: string; name?: string } | undefined,
-): "openai-codex" | undefined {
+): "openai-codex" | "minimax" | undefined {
   if (!model) return undefined;
   const p = (model.provider ?? "").trim().toLowerCase();
   if (p === "openai-codex") return "openai-codex";
+  if (p === "minimax") return "minimax";
   if (p) return undefined;
   const n = (model.id ?? model.name ?? "").toLowerCase();
   if (n.includes("codex")) return "openai-codex";
+  if (n.includes("minimax")) return "minimax";
   return undefined;
 }
 
@@ -230,12 +232,20 @@ class UsageDashboardComponent implements Component {
       lines.push(
         `- ${provider.providerLabel}: ${status} (${provider.sourceLabel})${age ? ` • ${age}` : ""}${diag ? ` • ${diag}` : ""}`,
       );
-      if (provider.providerId === "openai-codex") {
+      if (
+        provider.providerId === "openai-codex" ||
+        provider.providerId === "minimax"
+      ) {
         for (const w of provider.windows) {
           const text = w.unavailableReason
             ? `${w.label}: ${w.unavailableReason}`
-            : `${w.label}: ${w.usedPercent}%`;
+            : w.used != null && w.limit != null && w.unit
+              ? `${w.label}: ${w.used}/${w.limit} ${w.unit} (${w.usedPercent}%)${w.resetAt ? ` • resets ${new Date(w.resetAt).toISOString()}` : " • reset unavailable"}`
+              : `${w.label}: ${w.usedPercent}%`;
           lines.push(`    - ${text}`);
+        }
+        if (provider.providerId === "minimax") {
+          lines.push(`    - Plan: ${provider.planName ?? "unavailable"}`);
         }
       }
     }
@@ -365,16 +375,37 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         }
         return;
       }
-      providerRefresh = Promise.all(
-        providers.map(
-          async (provider) =>
-            (
-              await provider.fetch({
-                force,
-                signal,
-              })
-            ).snapshot,
-        ),
+      const mapWithLimit = async <T, R>(
+        items: T[],
+        limit: number,
+        fn: (item: T) => Promise<R>,
+      ): Promise<R[]> => {
+        const out: R[] = new Array(items.length);
+        let index = 0;
+        const workers = Array.from(
+          { length: Math.min(limit, items.length) },
+          async () => {
+            while (index < items.length) {
+              const i = index;
+              index += 1;
+              out[i] = await fn(items[i]);
+            }
+          },
+        );
+        await Promise.all(workers);
+        return out;
+      };
+
+      providerRefresh = mapWithLimit(
+        providers,
+        3,
+        async (provider) =>
+          (
+            await provider.fetch({
+              force,
+              signal,
+            })
+          ).snapshot,
       )
         .then((snapshots) => {
           state.providers = snapshots;
@@ -408,7 +439,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
     const bootstrap = async () => {
       await Promise.all([populateProviders(false), refreshOffline(false)]);
-      state.diagnostics = ["phase-3 live runtime ready"];
+      state.diagnostics = ["phase-4 live runtime ready"];
       emit(READY_EVENT);
     };
 
@@ -443,7 +474,11 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           .mkdir(providerCacheDir(deps), { recursive: true })
           .then(() => {
             cacheWatcher = deps.watch(providerCacheDir(deps), (filename) => {
-              if (filename !== "openai-codex.json") return;
+              if (
+                filename !== "openai-codex.json" &&
+                filename !== "minimax.json"
+              )
+                return;
               void emitProviderUpdate(false).catch(() => undefined);
             });
           })
@@ -459,7 +494,10 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
     pi.on("model_select", (event, ctx) => {
       updateModelContext(event.model);
-      if (state.currentProviderId === "openai-codex") {
+      if (
+        state.currentProviderId === "openai-codex" ||
+        state.currentProviderId === "minimax"
+      ) {
         void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
       } else {
         emit(UPDATE_CURRENT_EVENT);
