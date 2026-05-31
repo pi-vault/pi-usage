@@ -108,6 +108,16 @@ async function waitForEvent(pi: PiMock, name: string): Promise<void> {
   }
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  tries = 50,
+): Promise<void> {
+  for (let i = 0; i < tries; i += 1) {
+    if (predicate()) return;
+    await waitForMicrotasks();
+  }
+}
+
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "pi-usage-extension-"));
 }
@@ -164,7 +174,14 @@ describe("usage extension", () => {
   it("/usage --refresh marks diagnostic", async () => {
     const pi = createPiMock();
     const ui = createUiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        fetch: vi.fn(async () => {
+          throw new Error("network unavailable");
+        }) as never,
+      },
+    })(pi as never);
     pi.trigger("session_start");
     await waitForMicrotasks();
 
@@ -498,6 +515,43 @@ describe("usage extension", () => {
     await waitForMicrotasks();
 
     expect(fetchMock).toHaveBeenCalledTimes(before);
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refreshes only for live-provider snapshot files", async () => {
+    const root = mkTmp();
+    const pi = createPiMock();
+    let onCacheChange: ((filename?: string) => void) | undefined;
+    createUsageExtension({
+      deps: {
+        agentDir: (() => root) as never,
+        fetch: vi.fn(async () => {
+          throw new Error("socket unavailable");
+        }) as never,
+        watch: (_path, onChange) => {
+          onCacheChange = onChange;
+          return { close: () => undefined };
+        },
+      },
+    })(pi as never);
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, "usage-core:ready");
+    await waitForMicrotasks();
+    const updateEventCount = () =>
+      pi.events.emit.mock.calls.filter(
+        (call) => call[0] === "usage-core:update-current",
+      ).length;
+    const before = updateEventCount();
+
+    onCacheChange?.("offline.json");
+    await waitForMicrotasks();
+    expect(updateEventCount()).toBe(before);
+
+    onCacheChange?.("command-code.json");
+    await waitForCondition(() => updateEventCount() > before);
+    expect(updateEventCount()).toBeGreaterThan(before);
+
     pi.trigger("session_shutdown");
     rmSync(root, { recursive: true, force: true });
   });
