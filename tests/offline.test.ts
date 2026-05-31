@@ -88,6 +88,37 @@ describe("offline scanner", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("parses current nested usage costs", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    writeFileSync(
+      join(sessions, "nested.jsonl"),
+      `${JSON.stringify({
+        type: "message",
+        id: "nested",
+        timestamp: "2026-05-30T11:00:00Z",
+        message: {
+          role: "assistant",
+          provider: "opencode-go",
+          model: "glm",
+          usage: {
+            input: 1,
+            output: 2,
+            cost: { input: 0.1, output: 0.2, total: 0.3 },
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+    });
+    expect(result.turns[0].cost).toBe(0.3);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("returns empty for missing root", async () => {
     const deps = createDefaultDeps();
     const result = await scanOfflineUsage({

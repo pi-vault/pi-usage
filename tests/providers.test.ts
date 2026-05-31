@@ -58,6 +58,9 @@ describe("provider detection", () => {
       detectProviderFromModel({ provider: "minimax", id: "anything" }),
     ).toBe("minimax");
     expect(
+      detectProviderFromModel({ provider: "opencode-go", id: "anything" }),
+    ).toBe("opencode-go");
+    expect(
       detectProviderFromModel({
         provider: "amazon-bedrock",
         id: "openai-codex-proxy",
@@ -69,6 +72,15 @@ describe("provider detection", () => {
     expect(detectProviderFromModel({ provider: "", id: "minimax-m2" })).toBe(
       "minimax",
     );
+    expect(
+      detectProviderFromModel({ provider: "", id: "opencode-go/glm-5" }),
+    ).toBe("opencode-go");
+    expect(
+      detectProviderFromModel({
+        provider: "amazon-bedrock",
+        id: "opencode-go-proxy",
+      }),
+    ).toBeUndefined();
   });
 });
 

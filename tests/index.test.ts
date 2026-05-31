@@ -291,13 +291,11 @@ describe("usage extension", () => {
       (snapshot) => snapshot.providerId === "minimax",
     );
     expect(minimax?.diagnostic).toContain("Live cache is unavailable");
+    const opencode = snapshots.find((s) => s.providerId === "opencode-go");
+    expect(opencode?.diagnostic.length).toBeGreaterThan(0);
     expect(
       snapshots
-        .filter(
-          (snapshot) =>
-            snapshot.providerId === "opencode-go" ||
-            snapshot.providerId === "command-code",
-        )
+        .filter((snapshot) => snapshot.providerId === "command-code")
         .every((snapshot) => snapshot.diagnostic.includes("Phase")),
     ).toBe(true);
   });

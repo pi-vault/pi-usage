@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import type { UsageDeps } from "./deps.ts";
+import { buildOpenCodeGoSnapshot } from "./opencode-go.ts";
 import type {
   LiveUsageWindow,
   ProviderFetchOutcome,
@@ -10,6 +11,7 @@ import type {
 
 const OPENAI_TTL_MS = 5 * 60 * 1000;
 const MINIMAX_TTL_MS = 60 * 1000;
+const OPENCODE_GO_TTL_MS = 60 * 1000;
 const LOCK_STALE_MS = 5_000;
 const LOCK_WAIT_MS = 750;
 const LOCK_POLL_MS = 50;
@@ -327,7 +329,7 @@ function normalizeOpenAIWindows(
 }
 
 type LiveRuntimeConfig = {
-  id: Extract<ProviderId, "openai-codex" | "minimax">;
+  id: Extract<ProviderId, "openai-codex" | "minimax" | "opencode-go">;
   fetchLive: (input: {
     cached: ProviderUsageSnapshot | undefined;
     now: number;
@@ -686,6 +688,35 @@ function resolveMiniMaxHost(env: NodeJS.ProcessEnv): {
   };
 }
 
+async function fetchOpenCodeGoLive(
+  deps: UsageDeps,
+  input?: { force?: boolean; signal?: AbortSignal },
+): Promise<ProviderFetchOutcome> {
+  return fetchWithLiveRuntime(
+    deps,
+    {
+      id: "opencode-go",
+      fetchLive: async ({ now, signal }) => {
+        const snapshot = await buildOpenCodeGoSnapshot(deps, now, { signal });
+        if (!snapshot.available) {
+          return {
+            kind: "error",
+            message: [snapshot.diagnostic, ...snapshot.diagnostics].join(" "),
+          };
+        }
+        return {
+          kind: "ok",
+          snapshot: {
+            ...snapshot,
+            expiresAt: now + OPENCODE_GO_TTL_MS,
+          },
+        };
+      },
+    },
+    input,
+  );
+}
+
 async function fetchMiniMaxLive(
   deps: UsageDeps,
   input?: { force?: boolean; signal?: AbortSignal },
@@ -818,6 +849,7 @@ export function createProviderRegistry(
     fetch: async (input) => {
       if (id === "openai-codex") return fetchOpenAICodexLive(deps, input);
       if (id === "minimax") return fetchMiniMaxLive(deps, input);
+      if (id === "opencode-go") return fetchOpenCodeGoLive(deps, input);
       return {
         snapshot: unavailableSnapshot(
           deps,
