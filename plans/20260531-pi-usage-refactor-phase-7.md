@@ -13,9 +13,16 @@ The current codebase still carries implementation-phase scaffolding from the ori
 - `phaseByProvider`
 - placeholder diagnostics such as `Unavailable in Phase 3`
 - future-implementation text such as `will be implemented in Phase X`
+- OpenCode Go snapshots that still emit `phase: "Phase 5"`
 
 This phase removes that scaffolding cleanly and extracts the remaining static values into `src/constants.ts`. It is a
 low-risk refactor checkpoint that should not change provider behavior, cache semantics, or the dashboard structure.
+
+Repo check on May 31, 2026 confirms this phase is still pending and ready to implement as a small refactor:
+
+- working tree is clean
+- `npm run check` passes
+- later refactor phases still assume this cleanup happens before provider extraction and UI redesign
 
 ## Changes
 
@@ -37,7 +44,9 @@ low-risk refactor checkpoint that should not change provider behavior, cache sem
   - any phase-oriented placeholder diagnostics in tests
 - Replace the OpenAI monthly placeholder reason with a phase-neutral string such as
   `Unavailable from ChatGPT usage API`.
-- Keep `src/providers.ts`, `src/opencode-go.ts`, and the current dashboard renderer structurally intact in this phase.
+- Update `src/opencode-go.ts` to stop emitting `phase` in both dashboard-backed and local-estimate snapshots.
+- Keep `src/providers.ts`, `src/opencode-go.ts`, and the current dashboard renderer structurally intact in this phase
+  apart from removing phase metadata/strings and extracting constants.
 
 ## Usable Checkpoint
 
@@ -61,6 +70,12 @@ low-risk refactor checkpoint that should not change provider behavior, cache sem
 - Verify OpenAI, MiniMax, OpenCode Go, and Command Code snapshots retain current behavior apart from diagnostic text.
 - Run `npm run check`.
 - Run `git diff --check`.
+
+## Notes
+
+- No replan is required. The plan still matches the current codebase and the broader refactor sequence.
+- The only scope clarification from repo review is that `src/opencode-go.ts` must be edited directly in this phase,
+  because it still hardcodes `phase: "Phase 5"` in emitted snapshots.
 
 ## Deferred Scope
 
