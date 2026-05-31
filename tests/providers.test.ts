@@ -98,6 +98,34 @@ describe("provider detection", () => {
   });
 });
 
+describe("provider registry", () => {
+  it("keeps provider order and strategies aligned with phase 8", () => {
+    const root = mkTmp();
+    const providers = createProviderRegistry(
+      createLiveDeps(root, () => 1_000, vi.fn(), {}),
+    );
+
+    expect(
+      providers.map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        strategy: provider.strategy,
+      })),
+    ).toEqual([
+      { id: "offline", label: "Offline", strategy: "offline" },
+      {
+        id: "openai-codex",
+        label: "OpenAI/Codex",
+        strategy: "api",
+      },
+      { id: "minimax", label: "MiniMax", strategy: "api" },
+      { id: "opencode-go", label: "OpenCode Go", strategy: "api" },
+      { id: "command-code", label: "Command Code", strategy: "api" },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe("OpenAI Codex provider", () => {
   it("fetches usage via HTTP and caches it", async () => {
     const root = mkTmp();
@@ -448,6 +476,8 @@ describe("Command Code provider", () => {
     ).snapshot;
     expect(snapshot.status).toBe("live");
     expect(snapshot.planName).toBe("Go");
+    expect(snapshot.windows[0].key).toBe("current-cycle");
+    expect(snapshot.windows[0].label).toBe("Current cycle");
     expect(snapshot.windows[0].limit).toBeCloseTo(10);
     expect(snapshot.sourceLabel).toContain("Command Code");
     rmSync(root, { recursive: true, force: true });
@@ -679,6 +709,9 @@ describe("MiniMax provider", () => {
     expect(snapshot.planName).toBe("MiniMax Pro");
     expect(snapshot.windows[0].resetAt).toBe(31_000);
     expect(snapshot.windows[1].resetAt).toBe(241_000);
+    expect(snapshot.windows.some((window) => window.key === "monthly")).toBe(
+      false,
+    );
     rmSync(root, { recursive: true, force: true });
   });
 
