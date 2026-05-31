@@ -8,7 +8,8 @@ import type {
   UsageProviderAdapter,
 } from "./types.ts";
 
-const TTL_MS = 5 * 60 * 1000;
+const OPENAI_TTL_MS = 5 * 60 * 1000;
+const MINIMAX_TTL_MS = 60 * 1000;
 const LOCK_STALE_MS = 5_000;
 const LOCK_WAIT_MS = 750;
 const LOCK_POLL_MS = 50;
@@ -139,6 +140,37 @@ function asCachedSnapshot(
   };
 }
 
+function retryAfterMs(headers: Headers, now: number): number {
+  const raw = headers.get("retry-after");
+  if (!raw) return DEFAULT_BACKOFF_MS;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n * 1000;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) && at > now ? at - now : DEFAULT_BACKOFF_MS;
+}
+
+function toFinite(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value.trim());
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function parseEpochMs(value: unknown): number | undefined {
+  const n = toFinite(value);
+  if (!n) return undefined;
+  return n > 1e12 ? Math.round(n) : Math.round(n * 1000);
+}
+
+function parseDurationMs(value: unknown): number | undefined {
+  const n = toFinite(value);
+  if (!n || n <= 0) return undefined;
+  // MiniMax returns short durations in seconds and larger values in milliseconds.
+  return n >= 60_000 ? Math.round(n) : Math.round(n * 1000);
+}
+
 async function resolveCodexAuth(
   deps: UsageDeps,
 ): Promise<{ token?: string; accountId?: string }> {
@@ -172,9 +204,8 @@ async function resolveCodexAuth(
     env.CODEX_HOME?.trim() || join(deps.homeDir(), ".codex"),
     "auth.json",
   );
-  for (const path of [codexAuthPath]) {
-    const auth = await readJsonSafe<Record<string, unknown>>(deps, path);
-    if (!auth) continue;
+  const auth = await readJsonSafe<Record<string, unknown>>(deps, codexAuthPath);
+  if (auth) {
     if (typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY) {
       return { token: auth.OPENAI_API_KEY, accountId };
     }
@@ -184,7 +215,9 @@ async function resolveCodexAuth(
         token: tokens.access_token,
         accountId:
           accountId ||
-          (typeof tokens.account_id === "string" ? tokens.account_id : undefined),
+          (typeof tokens.account_id === "string"
+            ? tokens.account_id
+            : undefined),
       };
     }
   }
@@ -220,7 +253,9 @@ function parseWindow(
   };
 }
 
-function normalizeWindows(payload: Record<string, unknown>): LiveUsageWindow[] {
+function normalizeOpenAIWindows(
+  payload: Record<string, unknown>,
+): LiveUsageWindow[] {
   const windows: LiveUsageWindow[] = [];
   const rate = (payload.rate_limit ?? {}) as Record<string, unknown>;
   const primary = (rate.primary_window ?? {}) as Record<string, unknown>;
@@ -291,40 +326,42 @@ function normalizeWindows(payload: Record<string, unknown>): LiveUsageWindow[] {
   return windows;
 }
 
-function retryAfterMs(headers: Headers, now: number): number {
-  const raw = headers.get("retry-after");
-  if (!raw) return DEFAULT_BACKOFF_MS;
-  const n = Number(raw);
-  if (Number.isFinite(n) && n > 0) return n * 1000;
-  const at = Date.parse(raw);
-  return Number.isFinite(at) && at > now ? at - now : DEFAULT_BACKOFF_MS;
-}
+type LiveRuntimeConfig = {
+  id: Extract<ProviderId, "openai-codex" | "minimax">;
+  fetchLive: (input: {
+    cached: ProviderUsageSnapshot | undefined;
+    now: number;
+    signal?: AbortSignal;
+  }) => Promise<
+    | { kind: "ok"; snapshot: ProviderUsageSnapshot }
+    | { kind: "rate-limited"; message: string; nextRetryAt: number }
+    | { kind: "credentials"; message: string }
+    | { kind: "error"; message: string }
+  >;
+};
 
-async function fetchOpenAICodexLive(
+async function fetchWithLiveRuntime(
   deps: UsageDeps,
+  config: LiveRuntimeConfig,
   input?: { force?: boolean; signal?: AbortSignal },
 ): Promise<ProviderFetchOutcome> {
   const now = deps.now();
   const dir = providerCacheDir(deps);
-  const cachePath = join(dir, "openai-codex.json");
-  const lockPath = join(dir, "openai-codex.lock");
-  const backoffPath = join(dir, "openai-codex.backoff.json");
-  const failuresPath = join(dir, "openai-codex.failures.json");
+  const cachePath = join(dir, `${config.id}.json`);
+  const lockPath = join(dir, `${config.id}.lock`);
+  const backoffPath = join(dir, `${config.id}.backoff.json`);
+  const failuresPath = join(dir, `${config.id}.failures.json`);
+
   let cached = await readJsonSafe<ProviderUsageSnapshot>(deps, cachePath);
   const backoff = await readJsonSafe<{ nextRetryAt: number }>(
     deps,
     backoffPath,
   );
-
   if (backoff?.nextRetryAt && backoff.nextRetryAt > now) {
     return {
       snapshot: cached
         ? asCachedSnapshot(cached, now, "Rate limited. Retrying later.")
-        : unavailableSnapshot(
-            deps,
-            "openai-codex",
-            "Rate limited. Retrying later.",
-          ),
+        : unavailableSnapshot(deps, config.id, "Rate limited. Retrying later."),
       shouldWriteCache: false,
       nextRetryAt: backoff.nextRetryAt,
     };
@@ -340,14 +377,11 @@ async function fetchOpenAICodexLive(
     return {
       snapshot: cached
         ? asCachedSnapshot(cached, now, "Live cache is unavailable.")
-        : unavailableSnapshot(
-            deps,
-            "openai-codex",
-            "Live cache is unavailable.",
-          ),
+        : unavailableSnapshot(deps, config.id, "Live cache is unavailable."),
       shouldWriteCache: false,
     };
   }
+
   if (!lock) {
     const latest = await readJsonSafe<ProviderUsageSnapshot>(deps, cachePath);
     return {
@@ -355,7 +389,7 @@ async function fetchOpenAICodexLive(
         ? asCachedSnapshot(latest, now)
         : unavailableSnapshot(
             deps,
-            "openai-codex",
+            config.id,
             "Live refresh is already running in another Pi instance.",
           ),
       shouldWriteCache: false,
@@ -372,107 +406,50 @@ async function fetchOpenAICodexLive(
       };
     }
 
-    const auth = await resolveCodexAuth(deps);
-    if (!auth.token) {
+    let result: Awaited<ReturnType<typeof config.fetchLive>>;
+    try {
+      result = await config.fetchLive({ cached, now, signal: input?.signal });
+    } catch {
+      result = { kind: "error", message: "Live source unavailable." };
+    }
+    if (result.kind === "ok") {
+      await writeJsonAtomic(deps, cachePath, result.snapshot);
+      await Promise.all([
+        deps.unlink(backoffPath).catch(() => undefined),
+        deps.unlink(failuresPath).catch(() => undefined),
+      ]);
+      return { snapshot: result.snapshot, shouldWriteCache: true };
+    }
+
+    if (result.kind === "rate-limited") {
+      await writeJsonAtomic(deps, backoffPath, {
+        nextRetryAt: result.nextRetryAt,
+      });
       return {
         snapshot: cached
-          ? asCachedSnapshot(
-              cached,
-              deps.now(),
-              "Missing openai-codex credentials.",
-            )
-          : unavailableSnapshot(
-              deps,
-              "openai-codex",
-              "Missing openai-codex credentials.",
-            ),
+          ? asCachedSnapshot(cached, now, result.message)
+          : unavailableSnapshot(deps, config.id, result.message),
+        shouldWriteCache: false,
+        nextRetryAt: result.nextRetryAt,
+      };
+    }
+
+    if (result.kind === "credentials") {
+      return {
+        snapshot: cached
+          ? asCachedSnapshot(cached, now, result.message)
+          : unavailableSnapshot(deps, config.id, result.message),
         shouldWriteCache: false,
       };
     }
 
-    const timeout = new AbortController();
-    const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-    const signal = input?.signal
-      ? AbortSignal.any([input.signal, timeout.signal])
-      : timeout.signal;
-
-    const res = await deps
-      .fetch("https://chatgpt.com/backend-api/wham/usage", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          Accept: "application/json",
-          ...(auth.accountId ? { "ChatGPT-Account-Id": auth.accountId } : {}),
-        },
-        signal,
-      })
-      .finally(() => deps.clearTimeout(timer));
-
-    if (res.status === 429) {
-      const nextRetryAt = now + retryAfterMs(res.headers, now);
-      await writeJsonAtomic(deps, backoffPath, { nextRetryAt });
-      return {
-        snapshot: cached
-          ? asCachedSnapshot(cached, now, "Rate limited.")
-          : unavailableSnapshot(deps, "openai-codex", "Rate limited."),
-        shouldWriteCache: false,
-        nextRetryAt,
-      };
-    }
-    if (res.status === 401 || res.status === 403) {
-      return {
-        snapshot: cached
-          ? asCachedSnapshot(cached, now, "Please log into openai-codex again.")
-          : unavailableSnapshot(
-              deps,
-              "openai-codex",
-              "Please log into openai-codex again.",
-            ),
-        shouldWriteCache: false,
-      };
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const data = (await res.json().catch(() => undefined)) as
-      | Record<string, unknown>
-      | undefined;
-    if (!data) throw new Error("malformed json");
-    const windows = normalizeWindows(data);
-    if (!windows.some((w) => w.key !== "monthly"))
-      throw new Error("no parseable windows");
-
-    const snapshot: ProviderUsageSnapshot = {
-      providerId: "openai-codex",
-      providerLabel: labelByProvider["openai-codex"],
-      available: true,
-      phase: phaseByProvider["openai-codex"],
-      diagnostic: "",
-      fetchedAt: now,
-      expiresAt: now + TTL_MS,
-      balances: [],
-      status: "live",
-      sourceLabel: "ChatGPT usage API",
-      sourceKind: "live",
-      windows,
-      diagnostics: [],
-    };
-    await writeJsonAtomic(deps, cachePath, snapshot);
-    await Promise.all([
-      deps.unlink(backoffPath).catch(() => undefined),
-      deps.unlink(failuresPath).catch(() => undefined),
-    ]);
-    return { snapshot, shouldWriteCache: true };
-  } catch {
     if (!cached) {
       return {
-        snapshot: unavailableSnapshot(
-          deps,
-          "openai-codex",
-          "Live source unavailable.",
-        ),
+        snapshot: unavailableSnapshot(deps, config.id, result.message),
         shouldWriteCache: false,
       };
     }
+
     const prior = await readJsonSafe<{ count: number }>(deps, failuresPath);
     const count = (prior?.count ?? 0) + 1;
     await writeJsonAtomic(deps, failuresPath, { count });
@@ -484,9 +461,343 @@ async function fetchOpenAICodexLive(
       ),
       shouldWriteCache: false,
     };
+  } catch {
+    return {
+      snapshot: cached
+        ? asCachedSnapshot(cached, now, "Live cache is unavailable.")
+        : unavailableSnapshot(deps, config.id, "Live cache is unavailable."),
+      shouldWriteCache: false,
+    };
   } finally {
-    await lock.release();
+    await lock.release().catch(() => undefined);
   }
+}
+
+async function fetchOpenAICodexLive(
+  deps: UsageDeps,
+  input?: { force?: boolean; signal?: AbortSignal },
+): Promise<ProviderFetchOutcome> {
+  return fetchWithLiveRuntime(
+    deps,
+    {
+      id: "openai-codex",
+      fetchLive: async ({ now, signal }) => {
+        const auth = await resolveCodexAuth(deps);
+        if (!auth.token) {
+          return {
+            kind: "credentials",
+            message: "Missing openai-codex credentials.",
+          };
+        }
+
+        const timeout = new AbortController();
+        const timer = deps.setTimeout(() => timeout.abort(), 5_000);
+        const combinedSignal = signal
+          ? AbortSignal.any([signal, timeout.signal])
+          : timeout.signal;
+        const res = await deps
+          .fetch("https://chatgpt.com/backend-api/wham/usage", {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              Accept: "application/json",
+              ...(auth.accountId
+                ? { "ChatGPT-Account-Id": auth.accountId }
+                : {}),
+            },
+            signal: combinedSignal,
+          })
+          .finally(() => deps.clearTimeout(timer));
+
+        if (res.status === 429) {
+          return {
+            kind: "rate-limited",
+            message: "Rate limited.",
+            nextRetryAt: now + retryAfterMs(res.headers, now),
+          };
+        }
+        if (res.status === 401 || res.status === 403) {
+          return {
+            kind: "credentials",
+            message: "Please log into openai-codex again.",
+          };
+        }
+        if (!res.ok)
+          return { kind: "error", message: "Live source unavailable." };
+
+        const data = (await res.json().catch(() => undefined)) as
+          | Record<string, unknown>
+          | undefined;
+        if (!data)
+          return { kind: "error", message: "Live source unavailable." };
+        const windows = normalizeOpenAIWindows(data);
+        if (!windows.some((w) => w.key !== "monthly")) {
+          return { kind: "error", message: "Live source unavailable." };
+        }
+        return {
+          kind: "ok",
+          snapshot: {
+            providerId: "openai-codex",
+            providerLabel: labelByProvider["openai-codex"],
+            available: true,
+            phase: phaseByProvider["openai-codex"],
+            diagnostic: "",
+            fetchedAt: now,
+            expiresAt: now + OPENAI_TTL_MS,
+            balances: [],
+            status: "live",
+            sourceLabel: "ChatGPT usage API",
+            sourceKind: "live",
+            windows,
+            diagnostics: [],
+          },
+        };
+      },
+    },
+    input,
+  );
+}
+
+function normalizeMiniMaxWindows(
+  payload: Record<string, unknown>,
+  now: number,
+): { windows: LiveUsageWindow[]; planName?: string } {
+  const root = (
+    payload.data && typeof payload.data === "object" ? payload.data : payload
+  ) as Record<string, unknown>;
+  const fromCategory = Array.isArray(root.category_remains)
+    ? root.category_remains
+    : [];
+  const fromModel = Array.isArray(root.model_remains) ? root.model_remains : [];
+  const rows = fromCategory.length > 0 ? fromCategory : fromModel;
+
+  const planRaw = [
+    root.current_subscribe_title,
+    root.currentSubscribeTitle,
+    root.plan_name,
+    root.planName,
+    root.combo_title,
+    root.comboTitle,
+    root.current_plan_title,
+    root.currentPlanTitle,
+    root.package_name,
+    root.packageName,
+  ].find((v) => typeof v === "string" && v.trim()) as string | undefined;
+
+  const windows: LiveUsageWindow[] = [];
+  rows.forEach((entry, idx) => {
+    if (!entry || typeof entry !== "object") return;
+    const row = entry as Record<string, unknown>;
+    const service =
+      (typeof row.display_name === "string" && row.display_name.trim()) ||
+      (typeof row.category === "string" && row.category.trim()) ||
+      (typeof row.model_name === "string" && row.model_name.trim()) ||
+      `Service ${idx + 1}`;
+
+    const mk = (
+      key: "interval" | "weekly",
+      totalField: string,
+      remainsField: string,
+      resetField: string,
+      durationField: string,
+      label: string,
+    ) => {
+      const total = toFinite(row[totalField]);
+      const remaining = toFinite(row[remainsField]);
+      if (!total || total <= 0 || remaining == null) return;
+      const used = Math.max(0, Math.min(total, total - remaining));
+      const resetAt = parseEpochMs(row[resetField]);
+      const remainsMs = parseDurationMs(row[durationField]);
+      windows.push({
+        key: `${service}:${key}`,
+        label: `${service} ${label}`,
+        used,
+        limit: total,
+        unit: "requests",
+        usedPercent: Math.round((used / total) * 100),
+        resetAt: resetAt ?? (remainsMs ? now + remainsMs : undefined),
+      });
+    };
+
+    mk(
+      "interval",
+      "current_interval_total_count",
+      "current_interval_usage_count",
+      "end_time",
+      "remains_time",
+      "Interval",
+    );
+    mk(
+      "weekly",
+      "current_weekly_total_count",
+      "current_weekly_usage_count",
+      "weekly_end_time",
+      "weekly_remains_time",
+      "Weekly",
+    );
+  });
+
+  return { windows, planName: planRaw?.trim() };
+}
+
+function miniMaxResponseError(
+  payload: Record<string, unknown>,
+): { kind: "credentials" | "error"; message: string } | undefined {
+  const data =
+    payload.data && typeof payload.data === "object"
+      ? (payload.data as Record<string, unknown>)
+      : undefined;
+  const base = (
+    data?.base_resp && typeof data.base_resp === "object"
+      ? data.base_resp
+      : payload.base_resp && typeof payload.base_resp === "object"
+        ? payload.base_resp
+        : undefined
+  ) as Record<string, unknown> | undefined;
+  const status = toFinite(base?.status_code);
+  if (status == null || status === 0) return undefined;
+
+  const message =
+    typeof base?.status_msg === "string" ? base.status_msg.toLowerCase() : "";
+  if (
+    status === 1004 ||
+    message.includes("cookie") ||
+    message.includes("log in") ||
+    message.includes("login") ||
+    message.includes("unauthorized") ||
+    message.includes("credential")
+  ) {
+    return { kind: "credentials", message: "Invalid minimax credentials." };
+  }
+  return { kind: "error", message: "MiniMax API rejected the request." };
+}
+
+function resolveMiniMaxHost(env: NodeJS.ProcessEnv): {
+  host: string;
+  explicitCustom: boolean;
+} {
+  const raw = env.MINIMAX_API_HOST?.trim();
+  if (!raw) return { host: "https://api.minimax.io", explicitCustom: false };
+  const host = raw.replace(/\/+$/, "");
+  return {
+    host,
+    explicitCustom:
+      host !== "https://api.minimax.io" && host !== "https://api.minimaxi.com",
+  };
+}
+
+async function fetchMiniMaxLive(
+  deps: UsageDeps,
+  input?: { force?: boolean; signal?: AbortSignal },
+): Promise<ProviderFetchOutcome> {
+  return fetchWithLiveRuntime(
+    deps,
+    {
+      id: "minimax",
+      fetchLive: async ({ now, signal }) => {
+        const token =
+          deps.env.MINIMAX_CODING_API_KEY?.trim() ||
+          deps.env.MINIMAX_API_KEY?.trim();
+        if (!token) {
+          return {
+            kind: "credentials",
+            message: "Missing minimax credentials.",
+          };
+        }
+
+        const { host, explicitCustom } = resolveMiniMaxHost(deps.env);
+        const chinaHost = "https://api.minimaxi.com";
+        const endpoint = "/v1/api/openplatform/coding_plan/remains";
+
+        const request = async (baseHost: string) => {
+          const timeout = new AbortController();
+          const timer = deps.setTimeout(() => timeout.abort(), 5_000);
+          const combinedSignal = signal
+            ? AbortSignal.any([signal, timeout.signal])
+            : timeout.signal;
+          return deps
+            .fetch(`${baseHost}${endpoint}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "MM-API-Source": "pi-coding-agent",
+              },
+              signal: combinedSignal,
+            })
+            .finally(() => deps.clearTimeout(timer));
+        };
+
+        let res = await request(host);
+        let fallbackUsed = false;
+        if (
+          (res.status === 401 || res.status === 403) &&
+          host === "https://api.minimax.io" &&
+          !explicitCustom
+        ) {
+          res = await request(chinaHost);
+          fallbackUsed = true;
+        }
+
+        if (res.status === 429) {
+          return {
+            kind: "rate-limited",
+            message: "Rate limited.",
+            nextRetryAt: now + retryAfterMs(res.headers, now),
+          };
+        }
+
+        if (res.status === 401 || res.status === 403) {
+          return {
+            kind: "credentials",
+            message: fallbackUsed
+              ? "Invalid minimax credentials (global and China hosts)."
+              : "Invalid minimax credentials.",
+          };
+        }
+
+        if (!res.ok)
+          return { kind: "error", message: "Live source unavailable." };
+        const data = (await res.json().catch(() => undefined)) as
+          | Record<string, unknown>
+          | undefined;
+        if (!data)
+          return { kind: "error", message: "Unsupported response shape." };
+        const responseError = miniMaxResponseError(data);
+        if (responseError) return responseError;
+
+        const normalized = normalizeMiniMaxWindows(data, now);
+        if (normalized.windows.length === 0) {
+          return { kind: "error", message: "Unsupported response shape." };
+        }
+
+        const diagnostics = fallbackUsed
+          ? ["Retried against api.minimaxi.com."]
+          : [];
+        return {
+          kind: "ok",
+          snapshot: {
+            providerId: "minimax",
+            providerLabel: labelByProvider.minimax,
+            available: true,
+            phase: phaseByProvider.minimax,
+            diagnostic: "",
+            fetchedAt: now,
+            expiresAt: now + MINIMAX_TTL_MS,
+            balances: [],
+            status: "live",
+            sourceLabel: "MiniMax coding plan API",
+            sourceKind: "live",
+            windows: normalized.windows,
+            diagnostics,
+            planName: normalized.planName,
+          },
+        };
+      },
+    },
+    input,
+  );
 }
 
 export function createProviderRegistry(
@@ -506,6 +817,7 @@ export function createProviderRegistry(
     phase: phaseByProvider[id],
     fetch: async (input) => {
       if (id === "openai-codex") return fetchOpenAICodexLive(deps, input);
+      if (id === "minimax") return fetchMiniMaxLive(deps, input);
       return {
         snapshot: unavailableSnapshot(
           deps,

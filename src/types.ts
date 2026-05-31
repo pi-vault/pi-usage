@@ -20,6 +20,9 @@ export interface LiveUsageWindow {
   key: string;
   label: string;
   usedPercent: number;
+  used?: number;
+  limit?: number;
+  unit?: string;
   resetAt?: number;
   windowDurationMins?: number;
   unavailableReason?: string;
@@ -40,6 +43,7 @@ export interface ProviderUsageSnapshot {
   staleAgeMs?: number;
   windows: LiveUsageWindow[];
   diagnostics: string[];
+  planName?: string;
 }
 
 export type ProviderFetchStrategy = "offline" | "api";
