@@ -187,9 +187,7 @@ describe("OpenAI Codex provider", () => {
     expect(
       live.snapshot.windows.find((w) => w.key === "fiveHour")?.resetAt,
     ).toBe(456);
-    expect(
-      live.snapshot.windows.find((w) => w.key === "monthly")?.unavailableReason,
-    ).toBe("Unavailable from ChatGPT usage API");
+    expect(live.snapshot.windows.some((w) => w.key === "monthly")).toBe(false);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
     now += 1_000;
@@ -794,7 +792,7 @@ describe("MiniMax provider", () => {
     );
 
     const snapshot = (await provider.fetch()).snapshot;
-    expect(snapshot.planName).toBe("MiniMax Pro");
+    expect(snapshot.planName).toBe("Pro");
     expect(snapshot.windows[0].resetAt).toBe(31_000);
     expect(snapshot.windows[1].resetAt).toBe(241_000);
     expect(snapshot.windows.some((window) => window.key === "monthly")).toBe(

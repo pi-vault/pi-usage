@@ -19,12 +19,12 @@ function mkState(): UsageCoreState {
             key: "total",
             sessionCount: 1,
             messageCount: 1,
-            input: 10,
-            output: 20,
-            cache: 5,
-            cacheRead: 2,
-            cacheWrite: 3,
-            tokens: 33,
+            input: 120000,
+            output: 305000,
+            cache: 5000,
+            cacheRead: 2000,
+            cacheWrite: 3000,
+            tokens: 428000,
             cost: 1,
           },
           providers: [
@@ -32,12 +32,12 @@ function mkState(): UsageCoreState {
               key: "openai-codex",
               sessionCount: 1,
               messageCount: 1,
-              input: 10,
-              output: 20,
-              cache: 5,
-              cacheRead: 2,
-              cacheWrite: 3,
-              tokens: 33,
+              input: 120000,
+              output: 305000,
+              cache: 5000,
+              cacheRead: 2000,
+              cacheWrite: 3000,
+              tokens: 428000,
               cost: 1,
             },
           ],
@@ -61,9 +61,59 @@ function mkState(): UsageCoreState {
       ],
     },
     insights: [{ label: "x", cost: 1, detail: "y" }],
-    currentProviderId: null,
-    currentProviderSnapshot: null,
-    providers: [],
+    currentProviderId: "command-code",
+    currentProviderSnapshot: {
+      providerId: "command-code",
+      providerLabel: "Command Code",
+      available: true,
+      diagnostic: "",
+      fetchedAt: 0,
+      balances: [],
+      status: "live",
+      sourceLabel: "Command Code web usage API",
+      sourceKind: "live",
+      staleAgeMs: 4500,
+      windows: [
+        {
+          key: "current-cycle",
+          label: "Current cycle",
+          used: 4.2888,
+          limit: 10,
+          unit: "USD",
+          usedPercent: 43,
+          resetAt: Date.parse("2026-06-07T11:47:00"),
+        },
+      ],
+      diagnostics: ["Subscription endpoint unavailable."],
+      planName: "Go",
+    },
+    providers: [
+      {
+        providerId: "command-code",
+        providerLabel: "Command Code",
+        available: true,
+        diagnostic: "",
+        fetchedAt: 0,
+        balances: [],
+        status: "live",
+        sourceLabel: "Command Code web usage API",
+        sourceKind: "live",
+        staleAgeMs: 4500,
+        windows: [
+          {
+            key: "current-cycle",
+            label: "Current cycle",
+            used: 4.2888,
+            limit: 10,
+            unit: "USD",
+            usedPercent: 43,
+            resetAt: Date.parse("2026-06-07T11:47:00"),
+          },
+        ],
+        diagnostics: ["Subscription endpoint unavailable."],
+        planName: "Go",
+      },
+    ],
     diagnostics: [],
     compatibility: {
       currentLiveProviderId: null,
@@ -73,30 +123,29 @@ function mkState(): UsageCoreState {
 }
 
 describe("dashboard render", () => {
-  it("shows cacheR/cacheW in wide layout", () => {
+  it("renders focused provider heading, currency, bar, reset text, and token abbreviations", () => {
     const c = new UsageDashboardComponent(mkState(), () => undefined);
-    const out = c.render(100).join("\n");
-    expect(out).toContain("cacheR:2 cacheW:3");
+    const out = c.render(140).join("\n");
+    expect(out).toContain("Command Code (Go) • live (Command Code web usage API) • 4s old");
+    expect(out).toContain("Current cycle: $4.29/$10.00");
+    expect(out).toContain("% left");
+    expect(out).toContain("Resets Jun 7, 2026 11:47 AM");
+    expect(out).toContain("Provider / Model");
+    expect(out).toContain("openai-codex");
+    expect(out).toContain("428k");
+    expect(out).toContain("120k");
+    expect(out).not.toContain("123k");
+    expect(out).toContain("   Tokens");
+    expect(out).toContain("Tokens = Input + Output + CacheW");
+    expect(out).toContain("* Command Code: Subscription endpoint unavailable.");
   });
 
-  it("drops cache fields in compact and tiny layouts", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined);
-    expect(c.render(80).join("\n")).not.toContain("cacheR:");
-    expect(c.render(60).join("\n")).not.toContain("cacheR:");
-  });
-
-  it("expanded rows carry cache fields in wide layout", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined);
-    c.handleInput("\r");
-    const out = c.render(100).join("\n");
-    expect(out).toContain("- gpt-5 $1.00 tok:33 in:10 out:20 cacheR:2 cacheW:3 msg:1");
-  });
-
-  it("keeps insights toggle and navigation behavior", () => {
+  it("keeps insights toggle and expand behavior", () => {
     const c = new UsageDashboardComponent(mkState(), () => undefined);
     c.handleInput("v");
     expect(c.render(100).join("\n")).toContain("Insights");
     c.handleInput("v");
-    expect(c.render(100).join("\n")).toContain("Total:");
+    c.handleInput("\r");
+    expect(c.render(120).join("\n")).toContain("  gpt-5");
   });
 });

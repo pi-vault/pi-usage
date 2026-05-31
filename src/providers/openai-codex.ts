@@ -1,16 +1,8 @@
 import { join } from "node:path";
-import {
-  OPENAI_MONTHLY_UNAVAILABLE_REASON,
-  PROVIDER_LABELS,
-  PROVIDER_TTLS_MS,
-} from "../constants.ts";
+import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../constants.ts";
 import type { UsageDeps } from "../deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../types.ts";
-import {
-  fetchWithLiveRuntime,
-  readJsonSafe,
-  retryAfterMs,
-} from "./runtime.ts";
+import { fetchWithLiveRuntime, readJsonSafe, retryAfterMs } from "./runtime.ts";
 
 async function resolveCodexAuth(
   deps: UsageDeps,
@@ -56,7 +48,9 @@ async function resolveCodexAuth(
         token: tokens.access_token,
         accountId:
           accountId ||
-          (typeof tokens.account_id === "string" ? tokens.account_id : undefined),
+          (typeof tokens.account_id === "string"
+            ? tokens.account_id
+            : undefined),
       };
     }
   }
@@ -92,7 +86,9 @@ function parseWindow(
   };
 }
 
-function normalizeOpenAIWindows(payload: Record<string, unknown>): LiveUsageWindow[] {
+function normalizeOpenAIWindows(
+  payload: Record<string, unknown>,
+): LiveUsageWindow[] {
   const windows: LiveUsageWindow[] = [];
   const rate = (payload.rate_limit ?? {}) as Record<string, unknown>;
   const primary = (rate.primary_window ?? {}) as Record<string, unknown>;
@@ -100,13 +96,25 @@ function normalizeOpenAIWindows(payload: Record<string, unknown>): LiveUsageWind
 
   if (Object.keys(primary).length > 0) {
     const sec = primary.limit_window_seconds as number | undefined;
-    const key = sec === 5 * 3600 ? "fiveHour" : sec === 7 * 24 * 3600 ? "weekly" : "primary";
+    const key =
+      sec === 5 * 3600
+        ? "fiveHour"
+        : sec === 7 * 24 * 3600
+          ? "weekly"
+          : "primary";
     windows.push(parseWindow(primary, key, labelFromSeconds(sec, "Primary")));
   }
   if (Object.keys(secondary).length > 0) {
     const sec = secondary.limit_window_seconds as number | undefined;
-    const key = sec === 5 * 3600 ? "fiveHour" : sec === 7 * 24 * 3600 ? "weekly" : "secondary";
-    windows.push(parseWindow(secondary, key, labelFromSeconds(sec, "Secondary")));
+    const key =
+      sec === 5 * 3600
+        ? "fiveHour"
+        : sec === 7 * 24 * 3600
+          ? "weekly"
+          : "secondary";
+    windows.push(
+      parseWindow(secondary, key, labelFromSeconds(sec, "Secondary")),
+    );
   }
 
   const additional = Array.isArray(payload.additional_rate_limits)
@@ -142,16 +150,12 @@ function normalizeOpenAIWindows(payload: Record<string, unknown>): LiveUsageWind
       );
   });
 
-  windows.push({
-    key: "monthly",
-    label: "Monthly",
-    usedPercent: 0,
-    unavailableReason: OPENAI_MONTHLY_UNAVAILABLE_REASON,
-  });
   return windows;
 }
 
-export function createOpenAICodexProvider(deps: UsageDeps): UsageProviderAdapter {
+export function createOpenAICodexProvider(
+  deps: UsageDeps,
+): UsageProviderAdapter {
   return {
     id: "openai-codex",
     label: PROVIDER_LABELS["openai-codex"],
@@ -164,7 +168,10 @@ export function createOpenAICodexProvider(deps: UsageDeps): UsageProviderAdapter
           fetchLive: async ({ now, signal }) => {
             const auth = await resolveCodexAuth(deps);
             if (!auth.token) {
-              return { kind: "credentials" as const, message: "Missing openai-codex credentials." };
+              return {
+                kind: "credentials" as const,
+                message: "Missing openai-codex credentials.",
+              };
             }
 
             const timeout = new AbortController();
@@ -178,7 +185,9 @@ export function createOpenAICodexProvider(deps: UsageDeps): UsageProviderAdapter
                 headers: {
                   Authorization: `Bearer ${auth.token}`,
                   Accept: "application/json",
-                  ...(auth.accountId ? { "ChatGPT-Account-Id": auth.accountId } : {}),
+                  ...(auth.accountId
+                    ? { "ChatGPT-Account-Id": auth.accountId }
+                    : {}),
                 },
                 signal: combinedSignal,
               })
@@ -192,15 +201,31 @@ export function createOpenAICodexProvider(deps: UsageDeps): UsageProviderAdapter
               };
             }
             if (res.status === 401 || res.status === 403) {
-              return { kind: "credentials" as const, message: "Please log into openai-codex again." };
+              return {
+                kind: "credentials" as const,
+                message: "Please log into openai-codex again.",
+              };
             }
-            if (!res.ok) return { kind: "error" as const, message: "Live source unavailable." };
+            if (!res.ok)
+              return {
+                kind: "error" as const,
+                message: "Live source unavailable.",
+              };
 
-            const data = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
-            if (!data) return { kind: "error" as const, message: "Live source unavailable." };
+            const data = (await res.json().catch(() => undefined)) as
+              | Record<string, unknown>
+              | undefined;
+            if (!data)
+              return {
+                kind: "error" as const,
+                message: "Live source unavailable.",
+              };
             const windows = normalizeOpenAIWindows(data);
-            if (!windows.some((w) => w.key !== "monthly")) {
-              return { kind: "error" as const, message: "Live source unavailable." };
+            if (windows.length === 0) {
+              return {
+                kind: "error" as const,
+                message: "Live source unavailable.",
+              };
             }
             return {
               kind: "ok" as const,

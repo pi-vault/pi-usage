@@ -187,7 +187,7 @@ describe("usage extension", () => {
 
     await pi.runCommand("usage", "--refresh", { hasUI: true, ui });
     expect(ui.custom).toHaveBeenCalled();
-    expect(ui.render().join("\n")).toContain("Periods:");
+    expect(ui.render().join("\n")).toContain("[Today]");
 
     const updateCalls = pi.events.emit.mock.calls.filter(
       (call) => call[0] === "usage-core:update-current",
@@ -256,7 +256,8 @@ describe("usage extension", () => {
       expect.arrayContaining([
         "Pi Usage Dashboard",
         "No local session usage found.",
-        "- OpenAI/Codex: unavailable (Unavailable) • Live cache is unavailable.",
+        "* OpenAI/Codex: Live cache is unavailable.",
+        "- OpenAI/Codex • unavailable (Unavailable) • 0s old",
       ]),
     );
     expect(forbidden).toHaveBeenCalled();
@@ -275,14 +276,10 @@ describe("usage extension", () => {
     await pi.runCommand("usage", "", { hasUI: true, ui });
 
     const rendered = ui.render().join("\n");
-    expect(rendered).toContain(
-      "- OpenAI/Codex: unavailable (Unavailable) • Live cache is unavailable.",
-    );
-    expect(rendered).toContain(
-      "- MiniMax: unavailable (Unavailable) • Live cache is unavailable.",
-    );
-    expect(rendered).toContain("- OpenCode Go: unavailable (Unavailable)");
-    expect(rendered).toContain("- Command Code: unavailable (Unavailable)");
+    expect(rendered).toContain("* OpenAI/Codex: Live cache is unavailable.");
+    expect(rendered).toContain("* MiniMax: Live cache is unavailable.");
+    expect(rendered).toContain("- OpenCode Go • unavailable (Unavailable) • 0s old");
+    expect(rendered).toContain("- Command Code • unavailable (Unavailable) • 0s old");
   });
 
   it("placeholder providers cover all planned providers and are unavailable", async () => {
