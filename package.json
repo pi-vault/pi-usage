@@ -25,7 +25,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest --run --exclude tests/**/*.smoke.test.ts",
     "check": "biome lint . && tsc --noEmit && vitest --run --exclude tests/**/*.smoke.test.ts",
-    "pack:dry-run": "npm pack --dry-run"
+    "pack:dry-run": "pnpm pack --dry-run"
   },
   "pi": {
     "extensions": [
@@ -39,9 +39,12 @@
     "src",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.78.0",
-    "@earendil-works/pi-tui": "^0.78.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
