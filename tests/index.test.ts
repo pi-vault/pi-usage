@@ -256,7 +256,7 @@ describe("usage extension", () => {
       "- OpenAI/Codex: unavailable (Unavailable) • Live cache is unavailable.",
     );
     expect(rendered).toContain(
-      "- MiniMax: unavailable (Unavailable) • MiniMax will be implemented in Phase 4.",
+      "- MiniMax: unavailable (Unavailable) • Live cache is unavailable.",
     );
     expect(rendered).toContain("- OpenCode Go: unavailable (Unavailable)");
     expect(rendered).toContain("- Command Code: unavailable (Unavailable)");
@@ -287,9 +287,17 @@ describe("usage extension", () => {
     expect(snapshots.every((snapshot) => snapshot.available === false)).toBe(
       true,
     );
+    const minimax = snapshots.find(
+      (snapshot) => snapshot.providerId === "minimax",
+    );
+    expect(minimax?.diagnostic).toContain("Live cache is unavailable");
     expect(
       snapshots
-        .filter((snapshot) => snapshot.providerId !== "openai-codex")
+        .filter(
+          (snapshot) =>
+            snapshot.providerId === "opencode-go" ||
+            snapshot.providerId === "command-code",
+        )
         .every((snapshot) => snapshot.diagnostic.includes("Phase")),
     ).toBe(true);
   });
@@ -300,7 +308,20 @@ describe("usage extension", () => {
       deps: {
         now: () => 1,
         agentDir: (() => "/definitely/missing") as never,
-        fetch: vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 })) as never,
+        fetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 1,
+                    limit_window_seconds: 5 * 3600,
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+        ) as never,
       },
     })(pi as never);
     pi.trigger("session_start");
@@ -317,7 +338,20 @@ describe("usage extension", () => {
       deps: {
         now: () => 1,
         agentDir: (() => "/definitely/missing") as never,
-        fetch: vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 })) as never,
+        fetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 1,
+                    limit_window_seconds: 5 * 3600,
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+        ) as never,
       },
     })(pi as never);
     pi.trigger("session_start");
@@ -335,7 +369,20 @@ describe("usage extension", () => {
   it("turn events update context without live fetches", async () => {
     const root = mkTmp();
     const pi = createPiMock();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 }));
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            rate_limit: {
+              primary_window: {
+                used_percent: 1,
+                limit_window_seconds: 5 * 3600,
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
     createUsageExtension({
       deps: {
         agentDir: (() => root) as never,
@@ -359,7 +406,9 @@ describe("usage extension", () => {
     const root = mkTmp();
     const pi = createPiMock();
     let onCacheChange: ((filename?: string) => void) | undefined;
-    const fetchMock = vi.fn(async () => { throw new Error("socket unavailable"); });
+    const fetchMock = vi.fn(async () => {
+      throw new Error("socket unavailable");
+    });
     createUsageExtension({
       deps: {
         agentDir: (() => root) as never,
