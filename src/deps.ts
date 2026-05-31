@@ -8,8 +8,17 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
+export interface ReadonlySqliteDb {
+  close: () => void;
+  prepare: (sql: string) => {
+    all: (...params: unknown[]) => unknown[];
+    get: (...params: unknown[]) => unknown;
+  };
+}
 
 export interface UsageDeps {
   fetch: typeof fetch;
@@ -31,6 +40,7 @@ export interface UsageDeps {
   agentDir: () => string;
   homeDir: () => string;
   env: NodeJS.ProcessEnv;
+  openReadonlySqlite: (path: string) => ReadonlySqliteDb;
   now: () => number;
   setTimeout: typeof globalThis.setTimeout;
   clearTimeout: typeof globalThis.clearTimeout;
@@ -63,6 +73,8 @@ export const createDefaultDeps = (): UsageDeps => ({
   agentDir: getAgentDir,
   homeDir: homedir,
   env: process.env,
+  openReadonlySqlite: (path) =>
+    new DatabaseSync(path, { readOnly: true }) as unknown as ReadonlySqliteDb,
   now: () => Date.now(),
   setTimeout: globalThis.setTimeout,
   clearTimeout: globalThis.clearTimeout,

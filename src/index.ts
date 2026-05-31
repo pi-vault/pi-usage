@@ -64,15 +64,17 @@ function createInitialState(): UsageCoreState {
 
 export function detectProviderFromModel(
   model: { provider?: string; id?: string; name?: string } | undefined,
-): "openai-codex" | "minimax" | undefined {
+): "openai-codex" | "minimax" | "opencode-go" | undefined {
   if (!model) return undefined;
   const p = (model.provider ?? "").trim().toLowerCase();
   if (p === "openai-codex") return "openai-codex";
   if (p === "minimax") return "minimax";
+  if (p === "opencode-go") return "opencode-go";
   if (p) return undefined;
   const n = (model.id ?? model.name ?? "").toLowerCase();
   if (n.includes("codex")) return "openai-codex";
   if (n.includes("minimax")) return "minimax";
+  if (n.includes("opencode-go")) return "opencode-go";
   return undefined;
 }
 
@@ -234,7 +236,8 @@ class UsageDashboardComponent implements Component {
       );
       if (
         provider.providerId === "openai-codex" ||
-        provider.providerId === "minimax"
+        provider.providerId === "minimax" ||
+        provider.providerId === "opencode-go"
       ) {
         for (const w of provider.windows) {
           const text = w.unavailableReason
@@ -476,7 +479,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
             cacheWatcher = deps.watch(providerCacheDir(deps), (filename) => {
               if (
                 filename !== "openai-codex.json" &&
-                filename !== "minimax.json"
+                filename !== "minimax.json" &&
+                filename !== "opencode-go.json"
               )
                 return;
               void emitProviderUpdate(false).catch(() => undefined);
@@ -496,7 +500,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       updateModelContext(event.model);
       if (
         state.currentProviderId === "openai-codex" ||
-        state.currentProviderId === "minimax"
+        state.currentProviderId === "minimax" ||
+        state.currentProviderId === "opencode-go"
       ) {
         void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
       } else {

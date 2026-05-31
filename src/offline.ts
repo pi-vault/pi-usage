@@ -85,6 +85,12 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
+function usageCost(v: unknown): number {
+  if (typeof v === "number") return num(v);
+  if (!v || typeof v !== "object") return 0;
+  return num((v as Record<string, unknown>).total);
+}
+
 function fallbackId(turn: Omit<UsageTurn, "id">): string {
   return [
     turn.timestamp,
@@ -178,7 +184,7 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
     cacheRead: num(usage.cacheRead),
     cacheWrite: num(usage.cacheWrite),
     tokens: num(usage.totalTokens),
-    cost: num(usage.cost),
+    cost: usageCost(usage.cost),
   };
   const id =
     typeof row.id === "string" && row.id.trim() ? row.id : fallbackId(turnBase);
