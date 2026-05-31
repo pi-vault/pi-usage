@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createDefaultDeps } from "../src/deps.ts";
 import { createUsageExtension } from "../src/index.ts";
@@ -22,7 +24,7 @@ type PiMock = {
     args: string,
     ctx: CommandContext,
   ) => Promise<void>;
-  trigger: (name: string) => void;
+  trigger: (name: string, ...args: unknown[]) => void;
 };
 
 function createPiMock(): PiMock {
@@ -57,9 +59,9 @@ function createPiMock(): PiMock {
       }
       await command.handler(args, ctx);
     },
-    trigger: (name) => {
+    trigger: (name, ...args) => {
       for (const handler of events.get(name) ?? []) {
-        handler({}, {});
+        handler(...(args.length > 0 ? args : [{}, {}]));
       }
     },
   };
@@ -98,6 +100,10 @@ async function waitForEvent(pi: PiMock, name: string): Promise<void> {
     if (pi.emitted.some((event) => event.name === name)) return;
     await waitForMicrotasks();
   }
+}
+
+function mkTmp(): string {
+  return mkdtempSync(join(tmpdir(), "pi-usage-extension-"));
 }
 
 describe("package config", () => {
@@ -214,8 +220,7 @@ describe("usage extension", () => {
         writeFile: forbidden as never,
         mkdir: forbidden as never,
         rename: forbidden as never,
-        runCommand: forbidden as never,
-        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+        agentDir: (() => "/definitely/missing") as never,
         now: () => 1,
       },
     })(pi as never);
@@ -226,12 +231,12 @@ describe("usage extension", () => {
 
     expect(ui.render()).toEqual(
       expect.arrayContaining([
-        "Pi Usage Dashboard (Phase 2)",
+        "Pi Usage Dashboard",
         "No local session usage found.",
-        "- OpenAI/Codex: unavailable (Phase 3)",
+        "- OpenAI/Codex: unavailable (Unavailable) • Live cache is unavailable.",
       ]),
     );
-    expect(forbidden).not.toHaveBeenCalled();
+    expect(forbidden).toHaveBeenCalled();
   });
 
   it("/usage shows provider placeholders before session_start", async () => {
@@ -240,24 +245,32 @@ describe("usage extension", () => {
     createUsageExtension({
       deps: {
         now: () => 1,
-        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+        agentDir: (() => "/definitely/missing") as never,
       },
     })(pi as never);
 
     await pi.runCommand("usage", "", { hasUI: true, ui });
 
-    expect(ui.render()).toEqual(
-      expect.arrayContaining([
-        "- OpenAI/Codex: unavailable (Phase 3)",
-        "- MiniMax: unavailable (Phase 4)",
-        "- OpenCode Go: unavailable (Phase 5)",
-        "- Command Code: unavailable (Phase 6)",
-      ]),
+    const rendered = ui.render().join("\n");
+    expect(rendered).toContain(
+      "- OpenAI/Codex: unavailable (Unavailable) • Live cache is unavailable.",
     );
+    expect(rendered).toContain(
+      "- MiniMax: unavailable (Unavailable) • MiniMax will be implemented in Phase 4.",
+    );
+    expect(rendered).toContain("- OpenCode Go: unavailable (Unavailable)");
+    expect(rendered).toContain("- Command Code: unavailable (Unavailable)");
   });
 
   it("placeholder providers cover all planned providers and are unavailable", async () => {
-    const deps = { ...createDefaultDeps(), now: () => 1 };
+    const deps = {
+      ...createDefaultDeps(),
+      now: () => 1,
+      agentDir: () => "/definitely/missing",
+      fetch: (async () => {
+        throw new Error("no network");
+      }) as never,
+    };
 
     const providers = createProviderRegistry(deps);
     expect(providers.map((provider) => provider.label)).toEqual([
@@ -275,7 +288,9 @@ describe("usage extension", () => {
       true,
     );
     expect(
-      snapshots.every((snapshot) => snapshot.diagnostic.includes("Phase")),
+      snapshots
+        .filter((snapshot) => snapshot.providerId !== "openai-codex")
+        .every((snapshot) => snapshot.diagnostic.includes("Phase")),
     ).toBe(true);
   });
 
@@ -284,7 +299,8 @@ describe("usage extension", () => {
     createUsageExtension({
       deps: {
         now: () => 1,
-        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+        agentDir: (() => "/definitely/missing") as never,
+        fetch: vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 })) as never,
       },
     })(pi as never);
     pi.trigger("session_start");
@@ -300,7 +316,8 @@ describe("usage extension", () => {
     createUsageExtension({
       deps: {
         now: () => 1,
-        env: { PI_CODING_AGENT_DIR: "/definitely/missing" } as never,
+        agentDir: (() => "/definitely/missing") as never,
+        fetch: vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 })) as never,
       },
     })(pi as never);
     pi.trigger("session_start");
@@ -313,5 +330,56 @@ describe("usage extension", () => {
 
     expect(state.provider).toBeUndefined();
     expect(state.usage).toBeUndefined();
+  });
+
+  it("turn events update context without live fetches", async () => {
+    const root = mkTmp();
+    const pi = createPiMock();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: 1, limit_window_seconds: 5 * 3600 } } }), { status: 200 }));
+    createUsageExtension({
+      deps: {
+        agentDir: (() => root) as never,
+        fetch: fetchMock as never,
+      },
+    })(pi as never);
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, "usage-core:ready");
+    const before = fetchMock.mock.calls.length;
+
+    const context = { model: { provider: "openai-codex", id: "gpt-5-codex" } };
+    pi.trigger("turn_start", {}, context);
+    pi.trigger("turn_end", {}, context);
+
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("ignores provider lock-file watch events", async () => {
+    const root = mkTmp();
+    const pi = createPiMock();
+    let onCacheChange: ((filename?: string) => void) | undefined;
+    const fetchMock = vi.fn(async () => { throw new Error("socket unavailable"); });
+    createUsageExtension({
+      deps: {
+        agentDir: (() => root) as never,
+        fetch: fetchMock,
+        watch: (_path, onChange) => {
+          onCacheChange = onChange;
+          return { close: () => undefined };
+        },
+      },
+    })(pi as never);
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, "usage-core:ready");
+    await waitForMicrotasks();
+    const before = fetchMock.mock.calls.length;
+
+    onCacheChange?.("openai-codex.lock");
+    await waitForMicrotasks();
+
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
   });
 });
