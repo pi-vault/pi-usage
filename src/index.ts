@@ -9,6 +9,7 @@ import {
   type Component,
 } from "@earendil-works/pi-tui";
 import { createDefaultDeps, type UsageDeps } from "./deps.ts";
+import { PERIOD_ORDER, UI_STRINGS } from "./constants.ts";
 import { buildInsights, scanOfflineUsage, type PeriodKey } from "./offline.ts";
 import { createProviderRegistry, providerCacheDir } from "./providers.ts";
 import type {
@@ -20,7 +21,7 @@ import type {
 const GLOBAL_KEY = "__piUsage" as const;
 const READY_EVENT = "usage-core:ready";
 const UPDATE_CURRENT_EVENT = "usage-core:update-current";
-const PERIODS: UsageWindow[] = ["today", "thisWeek", "lastWeek", "allTime"];
+const PERIODS: UsageWindow[] = PERIOD_ORDER;
 
 type GlobalUsageState = { initialized: true };
 type ScanToken = { cancelled: boolean };
@@ -179,7 +180,7 @@ class UsageDashboardComponent implements Component {
 
   render(width: number): string[] {
     const w = Math.max(8, width);
-    const lines: string[] = ["Pi Usage Dashboard", ""];
+    const lines: string[] = [UI_STRINGS.dashboardTitle, ""];
     const tabs = PERIODS.map((p, i) =>
       i === this.periodIndex ? `[${p}]` : p,
     ).join(" ");
@@ -265,9 +266,7 @@ class UsageDashboardComponent implements Component {
       }
     }
     lines.push("");
-    lines.push(
-      "Tab/←→ period • ↑↓ row • Enter expand • v insights • q/Esc close",
-    );
+    lines.push(UI_STRINGS.dashboardFooter);
     return lines.map((line) => widthSafe(line, w));
   }
 
