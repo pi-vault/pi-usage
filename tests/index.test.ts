@@ -489,6 +489,66 @@ describe("usage extension", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("model_select keeps current model label when only ctx.model is populated", async () => {
+    const root = mkTmp();
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: (() => root) as never,
+        fetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 1,
+                    limit_window_seconds: 5 * 3600,
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+        ) as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, "usage-core:ready");
+
+    pi.trigger(
+      "model_select",
+      { model: undefined },
+      { model: { provider: "openai-codex", id: "gpt-5-codex" } },
+    );
+
+    await waitForCondition(() =>
+      pi.emitted.some((event) => {
+        if (event.name !== "usage-core:update-current") return false;
+        const payload = event.payload as {
+          state: { currentModelLabel?: string };
+        };
+        return payload.state.currentModelLabel === "gpt-5-codex";
+      }),
+    );
+
+    const lastUpdate = [...pi.emitted]
+      .reverse()
+      .find((event) => event.name === "usage-core:update-current");
+    const state = (
+      lastUpdate?.payload as {
+        state: {
+          currentProviderId: string | null;
+          currentModelLabel?: string;
+        };
+      }
+    ).state;
+
+    expect(state.currentProviderId).toBe("openai-codex");
+    expect(state.currentModelLabel).toBe("gpt-5-codex");
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("ignores provider lock-file watch events", async () => {
     const root = mkTmp();
     const pi = createPiMock();

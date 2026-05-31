@@ -70,6 +70,8 @@ export interface AggregatedUsageRow {
   input: number;
   output: number;
   cache: number;
+  cacheRead: number;
+  cacheWrite: number;
   tokens: number;
   cost: number;
 }
@@ -114,6 +116,7 @@ export interface UsageCoreState {
   offline: OfflineUsageState;
   insights: UsageInsight[];
   currentProviderId: ProviderId | null;
+  currentModelLabel?: string;
   currentProviderSnapshot: ProviderUsageSnapshot | null;
   providers: ProviderUsageSnapshot[];
   diagnostics: string[];
