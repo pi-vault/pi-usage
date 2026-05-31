@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -296,7 +302,7 @@ describe("usage extension", () => {
     expect(
       snapshots
         .filter((snapshot) => snapshot.providerId === "command-code")
-        .every((snapshot) => snapshot.diagnostic.includes("Phase")),
+        .every((snapshot) => snapshot.diagnostic.length > 0),
     ).toBe(true);
   });
 
@@ -328,6 +334,68 @@ describe("usage extension", () => {
       "usage-core:ready",
       expect.objectContaining({ state: expect.any(Object) }),
     );
+  });
+
+  it("uses positive local Command Code rows when web usage is unavailable", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const row = (id: string, provider: string, cost: number) =>
+      JSON.stringify({
+        type: "message",
+        id,
+        timestamp: "2026-05-30T11:00:00Z",
+        message: {
+          role: "assistant",
+          provider,
+          model: "test",
+          usage: { cost: { total: cost } },
+        },
+      });
+    writeFileSync(
+      join(sessions, "command-code.jsonl"),
+      [
+        row("current", "command-code", 1.25),
+        row("legacy", "commandcode", 0.75),
+        row("negative", "command-code", -10),
+      ].join("\n"),
+      "utf8",
+    );
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-31T00:00:00Z"),
+      },
+    })(pi as never);
+
+    pi.trigger("session_start");
+    await waitForEvent(pi, "usage-core:ready");
+    const ready = pi.emitted.find((event) => event.name === "usage-core:ready");
+    const state = (
+      ready?.payload as {
+        state: {
+          providers: Array<{
+            providerId: string;
+            status: string;
+            sourceKind: string;
+            balances: Array<{ label: string; remaining: number | null }>;
+          }>;
+        };
+      }
+    ).state;
+    const commandCode = state.providers.find(
+      (provider) => provider.providerId === "command-code",
+    );
+    expect(commandCode?.status).toBe("local");
+    expect(commandCode?.sourceKind).toBe("local");
+    expect(commandCode?.balances).toContainEqual({
+      label: "Local Pi session total",
+      remaining: 2,
+      unit: "USD",
+    });
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("emits compatibility fields that clear existing powerbar consumers", async () => {
