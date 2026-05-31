@@ -13,8 +13,8 @@ export interface ProviderBalance {
   unit: string;
 }
 
-export type LiveStatus = "live" | "cached" | "stale" | "unavailable";
-export type LiveSourceKind = "live" | "cache" | "none";
+export type LiveStatus = "live" | "cached" | "stale" | "local" | "unavailable";
+export type LiveSourceKind = "live" | "cache" | "local" | "none";
 
 export interface LiveUsageWindow {
   key: string;

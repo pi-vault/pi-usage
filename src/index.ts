@@ -64,17 +64,20 @@ function createInitialState(): UsageCoreState {
 
 export function detectProviderFromModel(
   model: { provider?: string; id?: string; name?: string } | undefined,
-): "openai-codex" | "minimax" | "opencode-go" | undefined {
+): "openai-codex" | "minimax" | "opencode-go" | "command-code" | undefined {
   if (!model) return undefined;
   const p = (model.provider ?? "").trim().toLowerCase();
   if (p === "openai-codex") return "openai-codex";
   if (p === "minimax") return "minimax";
   if (p === "opencode-go") return "opencode-go";
+  if (p === "command-code" || p === "commandcode") return "command-code";
   if (p) return undefined;
   const n = (model.id ?? model.name ?? "").toLowerCase();
   if (n.includes("codex")) return "openai-codex";
   if (n.includes("minimax")) return "minimax";
   if (n.includes("opencode-go")) return "opencode-go";
+  if (n.includes("command-code") || n.includes("commandcode"))
+    return "command-code";
   return undefined;
 }
 
@@ -237,7 +240,8 @@ class UsageDashboardComponent implements Component {
       if (
         provider.providerId === "openai-codex" ||
         provider.providerId === "minimax" ||
-        provider.providerId === "opencode-go"
+        provider.providerId === "opencode-go" ||
+        provider.providerId === "command-code"
       ) {
         for (const w of provider.windows) {
           const text = w.unavailableReason
@@ -247,8 +251,16 @@ class UsageDashboardComponent implements Component {
               : `${w.label}: ${w.usedPercent}%`;
           lines.push(`    - ${text}`);
         }
-        if (provider.providerId === "minimax") {
+        if (
+          provider.providerId === "minimax" ||
+          provider.providerId === "command-code"
+        ) {
           lines.push(`    - Plan: ${provider.planName ?? "unavailable"}`);
+        }
+        for (const balance of provider.balances) {
+          lines.push(
+            `    - ${balance.label}: ${balance.remaining ?? "unavailable"} ${balance.unit}`,
+          );
         }
       }
     }
@@ -333,6 +345,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     let providerForcePending = false;
     let periodicRefresh: NodeJS.Timeout | undefined;
     let cacheWatcher: { close: () => void } | undefined;
+    let localCommandCodeCost = 0;
 
     const syncCompatibility = () => {
       const current =
@@ -366,6 +379,39 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         state.provider = undefined;
         state.usage = undefined;
       }
+    };
+
+    const applyCommandCodeLocalFallback = () => {
+      const ccIndex = state.providers.findIndex(
+        (p) => p.providerId === "command-code",
+      );
+      if (
+        ccIndex < 0 ||
+        localCommandCodeCost <= 0 ||
+        state.providers[ccIndex].available
+      ) {
+        return;
+      }
+      state.providers[ccIndex] = {
+        ...state.providers[ccIndex],
+        available: true,
+        status: "local",
+        sourceKind: "local",
+        sourceLabel: "Local Pi sessions",
+        diagnostic: "Live unavailable; showing local Pi session history.",
+        diagnostics: [
+          "Snapshot reflects only local Pi session history.",
+          ...state.providers[ccIndex].diagnostics,
+        ],
+        windows: [],
+        balances: [
+          {
+            label: "Local Pi session total",
+            remaining: localCommandCodeCost,
+            unit: "USD",
+          },
+        ],
+      };
     };
 
     const populateProviders = async (force = false, signal?: AbortSignal) => {
@@ -412,6 +458,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       )
         .then((snapshots) => {
           state.providers = snapshots;
+          applyCommandCodeLocalFallback();
           syncCompatibility();
         })
         .finally(() => {
@@ -436,13 +483,25 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       state.offline.scannedFiles = result.scannedFiles;
       state.offline.messageCount = result.turns.length;
       state.insights = buildInsights(result.turns);
+      localCommandCodeCost = result.turns
+        .filter(
+          (turn) =>
+            (turn.provider === "command-code" ||
+              turn.provider === "commandcode") &&
+            turn.cost > 0,
+        )
+        .reduce((sum, turn) => sum + turn.cost, 0);
+
+      applyCommandCodeLocalFallback();
+      syncCompatibility();
+
       state.generatedAt = deps.now();
       state.loading = false;
     };
 
     const bootstrap = async () => {
       await Promise.all([populateProviders(false), refreshOffline(false)]);
-      state.diagnostics = ["phase-4 live runtime ready"];
+      state.diagnostics = ["live runtime ready"];
       emit(READY_EVENT);
     };
 
@@ -480,7 +539,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
               if (
                 filename !== "openai-codex.json" &&
                 filename !== "minimax.json" &&
-                filename !== "opencode-go.json"
+                filename !== "opencode-go.json" &&
+                filename !== "command-code.json"
               )
                 return;
               void emitProviderUpdate(false).catch(() => undefined);
@@ -501,7 +561,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       if (
         state.currentProviderId === "openai-codex" ||
         state.currentProviderId === "minimax" ||
-        state.currentProviderId === "opencode-go"
+        state.currentProviderId === "opencode-go" ||
+        state.currentProviderId === "command-code"
       ) {
         void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
       } else {
