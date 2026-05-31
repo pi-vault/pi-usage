@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { PROVIDER_TTLS_MS } from "../src/constants.ts";
 import { createDefaultDeps, type UsageDeps } from "../src/deps.ts";
 import { detectProviderFromModel } from "../src/index.ts";
 import { createProviderRegistry, providerCacheDir } from "../src/providers.ts";
@@ -54,6 +55,14 @@ function commandCodeProvider(deps: UsageDeps) {
     (item) => item.id === "command-code",
   );
   if (!provider) throw new Error("missing command-code provider");
+  return provider;
+}
+
+function opencodeGoProvider(deps: UsageDeps) {
+  const provider = createProviderRegistry(deps).find(
+    (item) => item.id === "opencode-go",
+  );
+  if (!provider) throw new Error("missing opencode-go provider");
   return provider;
 }
 
@@ -179,8 +188,7 @@ describe("OpenAI Codex provider", () => {
       live.snapshot.windows.find((w) => w.key === "fiveHour")?.resetAt,
     ).toBe(456);
     expect(
-      live.snapshot.windows.find((w) => w.key === "monthly")
-        ?.unavailableReason,
+      live.snapshot.windows.find((w) => w.key === "monthly")?.unavailableReason,
     ).toBe("Unavailable from ChatGPT usage API");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
@@ -454,14 +462,19 @@ describe("Command Code provider", () => {
       }
       if (url.toString().includes("/billing/credits")) {
         return new Response(
-          JSON.stringify({ credits: { monthlyCredits: 5.7112, purchasedCredits: 0 } }),
+          JSON.stringify({
+            credits: { monthlyCredits: 5.7112, purchasedCredits: 0 },
+          }),
           { status: 200 },
         );
       }
       return new Response(
         JSON.stringify({
           success: true,
-          data: { planId: "individual-go", currentPeriodEnd: "2026-06-01T00:00:00Z" },
+          data: {
+            planId: "individual-go",
+            currentPeriodEnd: "2026-06-01T00:00:00Z",
+          },
         }),
         { status: 200 },
       );
@@ -486,7 +499,9 @@ describe("Command Code provider", () => {
   it("returns credential diagnostic when cookie is missing", async () => {
     const root = mkTmp();
     const snapshot = (
-      await commandCodeProvider(createLiveDeps(root, () => 1_000, vi.fn())).fetch()
+      await commandCodeProvider(
+        createLiveDeps(root, () => 1_000, vi.fn()),
+      ).fetch()
     ).snapshot;
     expect(snapshot.available).toBe(false);
     expect(snapshot.diagnostics.join(" ")).toContain(
@@ -564,6 +579,79 @@ describe("Command Code provider", () => {
       }),
     ).fetch();
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("OpenCode Go provider", () => {
+  it("keeps dashboard source labels, windows, and TTL on live snapshots", async () => {
+    const root = mkTmp();
+    const now = Date.parse("2026-05-30T12:00:00Z");
+    const snapshot = (
+      await opencodeGoProvider(
+        createLiveDeps(
+          root,
+          () => now,
+          async () =>
+            new Response(
+              `<script>{rollingUsage:{resetInSec:60,usagePercent:12.4},weeklyUsage:{usagePercent:50,resetInSec:120},monthlyUsage:{resetInSec:180,usagePercent:75}}</script>`,
+              { status: 200 },
+            ),
+          {
+            OPENCODE_GO_COOKIE_HEADER: "auth=secret",
+            OPENCODE_GO_WORKSPACE_ID: "wrk_test",
+          },
+        ),
+      ).fetch()
+    ).snapshot;
+
+    expect(snapshot.status).toBe("live");
+    expect(snapshot.sourceLabel).toBe("OpenCode Go dashboard");
+    expect(snapshot.windows.map((w) => [w.key, w.label])).toEqual([
+      ["fiveHour", "5h"],
+      ["weekly", "Weekly"],
+      ["monthly", "Monthly"],
+    ]);
+    expect(snapshot.expiresAt).toBe(now + PROVIDER_TTLS_MS["opencode-go"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("converts unavailable snapshots into runtime error and preserves cached data", async () => {
+    const root = mkTmp();
+    let now = Date.parse("2026-05-30T12:00:00Z");
+    const deps = createLiveDeps(
+      root,
+      () => now,
+      async () =>
+        new Response(
+          `<script>{rollingUsage:{resetInSec:60,usagePercent:12.4},weeklyUsage:{usagePercent:50,resetInSec:120},monthlyUsage:{resetInSec:180,usagePercent:75}}</script>`,
+          { status: 200 },
+        ),
+      {
+        OPENCODE_GO_COOKIE_HEADER: "auth=secret",
+        OPENCODE_GO_WORKSPACE_ID: "wrk_test",
+      },
+    );
+    const provider = opencodeGoProvider(deps);
+    const live = await provider.fetch();
+    expect(live.snapshot.status).toBe("live");
+
+    deps.fetch = async () => new Response("", { status: 401 });
+    deps.openReadonlySqlite = () => {
+      throw new Error("no sqlite");
+    };
+    now += PROVIDER_TTLS_MS["opencode-go"] + 1;
+    const cachedOnce = await provider.fetch();
+    expect(cachedOnce.snapshot.status).toBe("stale");
+    expect(cachedOnce.snapshot.sourceKind).toBe("cache");
+
+    now += PROVIDER_TTLS_MS["opencode-go"] + 1;
+    const cachedTwice = await provider.fetch();
+    expect(cachedTwice.snapshot.status).toBe("stale");
+    expect(cachedTwice.snapshot.sourceKind).toBe("cache");
+    expect(cachedTwice.snapshot.diagnostics.join(" ")).toContain(
+      "Live refresh failed repeatedly",
+    );
     rmSync(root, { recursive: true, force: true });
   });
 });
