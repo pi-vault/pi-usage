@@ -91,19 +91,7 @@ function providerHeading(
     : provider.providerLabel;
   const ageMs =
     provider.staleAgeMs ?? Math.max(0, referenceTime - provider.fetchedAt);
-  return `${name} • ${provider.status} (${provider.sourceLabel}) • ${formatAge(ageMs)}`;
-}
-
-function focusedProvider(state: UsageCoreState): ProviderUsageSnapshot | null {
-  if (state.currentProviderSnapshot?.providerId !== "offline") {
-    return state.currentProviderSnapshot;
-  }
-  const nonOffline = state.providers.filter((p) => p.providerId !== "offline");
-  return (
-    nonOffline.find((p) => p.windows.length > 0 || p.balances.length > 0) ??
-    nonOffline[0] ??
-    null
-  );
+  return `${name} • ${provider.status} • ${formatAge(ageMs)}`;
 }
 
 function renderBar(usedPercent: number, width = 24): string {
@@ -129,15 +117,18 @@ function formatRatio(
 
 function renderWindow(
   window: ProviderUsageSnapshot["windows"][number],
-): string[] {
+): string {
   if (window.unavailableReason) {
-    return [`${window.label}: ${window.unavailableReason}`];
+    return `${window.label}: ${window.unavailableReason}`;
   }
   const ratio = formatRatio(window);
-  const summary = ratio
+  const left = ratio
     ? `${window.label}: ${ratio} ${renderBar(window.usedPercent)}`
     : `${window.label}: ${renderBar(window.usedPercent)}`;
-  return [summary, `  ${formatReset(window.resetAt)}`];
+  const resetText = window.resetAt
+    ? formatReset(window.resetAt)
+    : "Reset unavailable";
+  return `${left} • ${resetText}`;
 }
 
 function providerDiagnostics(provider: ProviderUsageSnapshot): string[] {
@@ -160,8 +151,16 @@ function tableColumns(width: number): TableColumn[] {
       { label: "Tokens", width: 7, render: (row) => formatAbbrev(row.tokens) },
       { label: "↑In", width: 7, render: (row) => formatAbbrev(row.input) },
       { label: "↓Out", width: 7, render: (row) => formatAbbrev(row.output) },
-      { label: "CacheR", width: 7, render: (row) => formatAbbrev(row.cacheRead) },
-      { label: "CacheW", width: 7, render: (row) => formatAbbrev(row.cacheWrite) },
+      {
+        label: "CacheR",
+        width: 7,
+        render: (row) => formatAbbrev(row.cacheRead),
+      },
+      {
+        label: "CacheW",
+        width: 7,
+        render: (row) => formatAbbrev(row.cacheWrite),
+      },
     ];
   }
   if (width >= 94) {
@@ -225,19 +224,91 @@ function rowLabel(
   return `${selected ? ">" : " "} ${expanded ? "▾" : "▸"} ${row.key}`;
 }
 
-function summaryCardWidth(lines: string[], width: number): number {
-  const contentWidth = Math.max(...lines.map((line) => line.length), 20);
-  return Math.min(contentWidth, Math.max(20, width - 4));
-}
-
 function renderBalanceLine(
   label: string,
   remaining: number | null,
   unit: string,
 ): string {
   const value =
-    unit === "USD" ? formatCurrency(remaining ?? undefined) : formatAbbrev(remaining ?? undefined);
+    unit === "USD"
+      ? formatCurrency(remaining ?? undefined)
+      : formatAbbrev(remaining ?? undefined);
   return `${label}: ${value}${unit === "USD" ? "" : ` ${unit}`}`;
+}
+
+function liveProviders(state: UsageCoreState): ProviderUsageSnapshot[] {
+  return state.providers.filter(
+    (provider) => provider.providerId !== "offline",
+  );
+}
+
+function initialLiveProviderIndex(state: UsageCoreState): number {
+  const providers = liveProviders(state);
+  if (providers.length === 0) return 0;
+  const current = state.currentProviderSnapshot;
+  if (current?.providerId && current.providerId !== "offline") {
+    const idx = providers.findIndex(
+      (provider) => provider.providerId === current.providerId,
+    );
+    if (idx >= 0) return idx;
+  }
+  const withData = providers.findIndex(
+    (provider) => provider.windows.length > 0 || provider.balances.length > 0,
+  );
+  return withData >= 0 ? withData : 0;
+}
+
+function legendLines(width: number): string[] {
+  const segments = [
+    "Tokens = Input + Output + CacheW",
+    "↑In = Input + CacheW",
+    "↓Out = Output",
+    "CacheR = Cache Read",
+    "CacheW = Cache Write",
+  ];
+  const separatorText = " • ";
+  const joined = segments.join(separatorText);
+  if (joined.length <= width) return [joined];
+
+  const first: string[] = [];
+  let line = "";
+  for (const segment of segments) {
+    const next = line ? `${line}${separatorText}${segment}` : segment;
+    if (next.length <= width || !line) {
+      line = next;
+      first.push(segment);
+      continue;
+    }
+    break;
+  }
+
+  const used = first.length;
+  if (used === 0 || used >= segments.length) return [joined];
+  const firstLine = first.join(separatorText);
+  const secondLine = segments.slice(used).join(separatorText);
+  return [firstLine, secondLine];
+}
+
+function tabLines(labels: string[], selectedIndex: number, width: number): string[] {
+  const tabs = labels.map((label, index) =>
+    index === selectedIndex ? `[${label}]` : label,
+  );
+  const separatorText = "    ";
+  const lines: string[] = [];
+  let line = "";
+
+  for (const tab of tabs) {
+    const next = line ? `${line}${separatorText}${tab}` : tab;
+    if (next.length <= width || !line) {
+      line = next;
+      continue;
+    }
+    lines.push(line);
+    line = tab;
+  }
+
+  if (line) lines.push(line);
+  return lines;
 }
 
 export class UsageDashboardComponent implements Component {
@@ -245,12 +316,15 @@ export class UsageDashboardComponent implements Component {
   private rowIndex = 0;
   private expandedProvider: string | null = null;
   private showInsights = false;
+  private currentUsageProviderIndex: number;
 
   constructor(
     private readonly state: UsageCoreState,
     private readonly done: () => void,
     private readonly cancelScan?: () => void,
-  ) {}
+  ) {
+    this.currentUsageProviderIndex = initialLiveProviderIndex(state);
+  }
 
   private currentPeriod(): AggregatedUsagePeriod | undefined {
     return this.state.offline.periods[this.periodIndex];
@@ -258,50 +332,7 @@ export class UsageDashboardComponent implements Component {
 
   render(width: number): string[] {
     const w = Math.max(8, width);
-    const lines: string[] = [UI_STRINGS.dashboardTitle, ""];
-    const referenceTime = Math.max(
-      this.state.generatedAt,
-      ...this.state.providers.map((provider) => provider.fetchedAt),
-      0,
-    );
-
-    const focus = focusedProvider(this.state);
-    if (focus) {
-      const cardLines = [
-        ">_ Pi Usage",
-        `Provider: ${providerHeading(focus, referenceTime)}`,
-      ];
-      if (this.state.currentModelLabel) {
-        cardLines.push(`Model: ${this.state.currentModelLabel}`);
-      }
-      if (this.state.loading || this.state.refreshRequested) {
-        cardLines.push(
-          `State: ${this.state.loading ? "Loading session history..." : "Refresh requested"}`,
-        );
-      }
-      cardLines.push(
-        `Offline: ${this.state.offline.scannedFiles} files • ${this.state.offline.messageCount} msgs`,
-      );
-      if (focus.windows.length === 0) {
-        cardLines.push("No live windows.");
-      }
-      for (const window of focus.windows) {
-        cardLines.push(...renderWindow(window));
-      }
-      for (const balance of focus.balances) {
-        cardLines.push(
-          renderBalanceLine(balance.label, balance.remaining, balance.unit),
-        );
-      }
-
-      const cardWidth = summaryCardWidth(cardLines, w);
-      lines.push(`┌${"─".repeat(cardWidth + 2)}┐`);
-      for (const line of cardLines) {
-        lines.push(`│ ${pad(line, cardWidth, "left")} │`);
-      }
-      lines.push(`└${"─".repeat(cardWidth + 2)}┘`);
-      lines.push("");
-    }
+    const lines: string[] = ["Usage Statistics", ""];
 
     lines.push(
       PERIODS.map((period, index) =>
@@ -317,7 +348,9 @@ export class UsageDashboardComponent implements Component {
       lines.push("Insights");
       if (this.state.insights.length === 0) lines.push("No insights yet.");
       for (const item of this.state.insights) {
-        lines.push(`- ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`);
+        lines.push(
+          `- ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`,
+        );
       }
     } else {
       const period = this.currentPeriod();
@@ -341,7 +374,12 @@ export class UsageDashboardComponent implements Component {
           if (expanded) {
             for (const model of period.modelsByProvider[row.key] ?? []) {
               lines.push(
-                tableLine(rowLabel(model, false, false, true), columns, providerWidth, model),
+                tableLine(
+                  rowLabel(model, false, false, true),
+                  columns,
+                  providerWidth,
+                  model,
+                ),
               );
             }
           }
@@ -349,45 +387,60 @@ export class UsageDashboardComponent implements Component {
         lines.push(separator(columns, providerWidth));
         lines.push(tableLine("Total", columns, providerWidth, period.total));
         lines.push("");
-        lines.push("Tokens = Input + Output + CacheW");
-        lines.push("↑In = Input + CacheW");
-        lines.push("↓Out = Output");
-        if (columns.some((column) => column.label === "CacheR")) {
-          lines.push("CacheR = Cache Read");
-          lines.push("CacheW = Cache Write");
+        lines.push(...legendLines(w));
+      }
+    }
+
+    lines.push("");
+    lines.push("Current Usage");
+
+    const providers = liveProviders(this.state);
+    if (providers.length === 0) {
+      lines.push("No live usage details.");
+    } else {
+      this.currentUsageProviderIndex = Math.min(
+        this.currentUsageProviderIndex,
+        Math.max(0, providers.length - 1),
+      );
+      lines.push(
+        ...tabLines(
+          providers.map((provider) => provider.providerLabel),
+          this.currentUsageProviderIndex,
+          w,
+        ),
+      );
+      lines.push("");
+
+      const referenceTime = Math.max(
+        this.state.generatedAt,
+        ...providers.map((provider) => provider.fetchedAt),
+        0,
+      );
+      const selected = providers[this.currentUsageProviderIndex];
+      lines.push(providerHeading(selected, referenceTime));
+      if (selected.windows.length === 0 && selected.balances.length === 0) {
+        lines.push("No live usage details.");
+      } else {
+        for (const window of selected.windows) {
+          lines.push(renderWindow(window));
+        }
+        for (const balance of selected.balances) {
+          lines.push(
+            renderBalanceLine(balance.label, balance.remaining, balance.unit),
+          );
         }
       }
     }
 
-    const diagnosticNotes = this.state.providers
-      .filter((provider) => provider.providerId !== "offline")
-      .flatMap((provider) =>
-        providerDiagnostics(provider).map(
-          (diagnostic) => `* ${provider.providerLabel}: ${diagnostic}`,
-        ),
-      );
+    const diagnosticNotes = providers.flatMap((provider) =>
+      providerDiagnostics(provider).map(
+        (diagnostic) => `* ${provider.providerLabel}: ${diagnostic}`,
+      ),
+    );
     if (diagnosticNotes.length > 0) {
       lines.push("");
       lines.push("Notes");
       lines.push(...diagnosticNotes);
-    }
-
-    lines.push("");
-    lines.push("Live providers");
-    for (const provider of this.state.providers.filter(
-      (item) => item.providerId !== "offline",
-    )) {
-      lines.push(`- ${providerHeading(provider, referenceTime)}`);
-      for (const window of provider.windows) {
-        for (const line of renderWindow(window)) {
-          lines.push(`    ${line}`);
-        }
-      }
-      for (const balance of provider.balances) {
-        lines.push(
-          `    ${renderBalanceLine(balance.label, balance.remaining, balance.unit)}`,
-        );
-      }
     }
 
     lines.push("");
@@ -406,17 +459,27 @@ export class UsageDashboardComponent implements Component {
       this.showInsights = !this.showInsights;
       return;
     }
-    if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+    if (matchesKey(data, Key.tab)) {
       this.periodIndex = (this.periodIndex + 1) % PERIODS.length;
       this.rowIndex = 0;
       this.expandedProvider = null;
       return;
     }
     if (matchesKey(data, Key.left)) {
-      this.periodIndex =
-        (this.periodIndex - 1 + PERIODS.length) % PERIODS.length;
-      this.rowIndex = 0;
-      this.expandedProvider = null;
+      const providers = liveProviders(this.state);
+      if (providers.length > 0) {
+        this.currentUsageProviderIndex =
+          (this.currentUsageProviderIndex - 1 + providers.length) %
+          providers.length;
+      }
+      return;
+    }
+    if (matchesKey(data, Key.right)) {
+      const providers = liveProviders(this.state);
+      if (providers.length > 0) {
+        this.currentUsageProviderIndex =
+          (this.currentUsageProviderIndex + 1) % providers.length;
+      }
       return;
     }
     if (!period) return;
@@ -432,7 +495,8 @@ export class UsageDashboardComponent implements Component {
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
       const provider = period.providers[this.rowIndex]?.key;
       if (!provider) return;
-      this.expandedProvider = this.expandedProvider === provider ? null : provider;
+      this.expandedProvider =
+        this.expandedProvider === provider ? null : provider;
     }
   }
 

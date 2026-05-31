@@ -40,8 +40,6 @@ export const PERIOD_ORDER: UsageWindow[] = [
 
 export const UI_STRINGS = {
   dashboardTitle: "Pi Usage Dashboard",
-  dashboardFooter: "Tab/←→ period • ↑↓ row • Enter expand • v insights • q/Esc close",
+  dashboardFooter:
+    "Tab period • ←→ provider • ↑↓ row • Enter expand • v insights • q/Esc close",
 } as const;
-
-export const OPENAI_MONTHLY_UNAVAILABLE_REASON =
-  "Unavailable from ChatGPT usage API";
