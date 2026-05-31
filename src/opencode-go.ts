@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { PROVIDER_LABELS } from "./constants.ts";
 import type { UsageDeps } from "./deps.ts";
 import { scanOfflineUsage } from "./offline.ts";
 import type { LiveUsageWindow, ProviderUsageSnapshot } from "./types.ts";
@@ -422,9 +423,8 @@ export async function buildOpenCodeGoSnapshot(
     if (dash.windows) {
       return {
         providerId: "opencode-go",
-        providerLabel: "OpenCode Go",
+        providerLabel: PROVIDER_LABELS["opencode-go"],
         available: true,
-        phase: "Phase 5",
         diagnostic: "",
         fetchedAt: now,
         balances: [],
@@ -456,9 +456,8 @@ export async function buildOpenCodeGoSnapshot(
   if (rows.length === 0) {
     return {
       providerId: "opencode-go",
-      providerLabel: "OpenCode Go",
+      providerLabel: PROVIDER_LABELS["opencode-go"],
       available: false,
-      phase: "Phase 5",
       diagnostic: "No local OpenCode Go usage rows found.",
       fetchedAt: now,
       balances: [],
@@ -500,9 +499,8 @@ export async function buildOpenCodeGoSnapshot(
 
   return {
     providerId: "opencode-go",
-    providerLabel: "OpenCode Go",
+    providerLabel: PROVIDER_LABELS["opencode-go"],
     available: true,
-    phase: "Phase 5",
     diagnostic: "",
     fetchedAt: now,
     balances: [],

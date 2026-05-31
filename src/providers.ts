@@ -1,4 +1,12 @@
 import { dirname, join } from "node:path";
+import {
+  DEFAULT_BACKOFF_MS,
+  LOCK_TIMINGS_MS,
+  OPENAI_MONTHLY_UNAVAILABLE_REASON,
+  PROVIDER_LABELS,
+  PROVIDER_ORDER,
+  PROVIDER_TTLS_MS,
+} from "./constants.ts";
 import type { UsageDeps } from "./deps.ts";
 import { buildOpenCodeGoSnapshot } from "./opencode-go.ts";
 import type {
@@ -9,30 +17,6 @@ import type {
   UsageProviderAdapter,
 } from "./types.ts";
 
-const OPENAI_TTL_MS = 5 * 60 * 1000;
-const MINIMAX_TTL_MS = 60 * 1000;
-const OPENCODE_GO_TTL_MS = 60 * 1000;
-const COMMAND_CODE_TTL_MS = 60 * 1000;
-const LOCK_STALE_MS = 5_000;
-const LOCK_WAIT_MS = 750;
-const LOCK_POLL_MS = 50;
-const DEFAULT_BACKOFF_MS = 60_000;
-
-const phaseByProvider: Record<ProviderId, string> = {
-  offline: "Phase 2",
-  "openai-codex": "Phase 3",
-  minimax: "Phase 4",
-  "opencode-go": "Phase 5",
-  "command-code": "Phase 6",
-};
-
-const labelByProvider: Record<ProviderId, string> = {
-  offline: "Offline",
-  "openai-codex": "OpenAI/Codex",
-  minimax: "MiniMax",
-  "opencode-go": "OpenCode Go",
-  "command-code": "Command Code",
-};
 
 function unavailableSnapshot(
   deps: UsageDeps,
@@ -41,9 +25,8 @@ function unavailableSnapshot(
 ): ProviderUsageSnapshot {
   return {
     providerId: id,
-    providerLabel: labelByProvider[id],
+    providerLabel: PROVIDER_LABELS[id],
     available: false,
-    phase: phaseByProvider[id],
     diagnostic,
     fetchedAt: deps.now(),
     balances: [],
@@ -96,7 +79,7 @@ async function acquireLock(
 ): Promise<{ release: () => Promise<void> } | undefined> {
   await deps.mkdir(dirname(path), { recursive: true });
   let waitedMs = 0;
-  while (waitedMs <= LOCK_WAIT_MS) {
+  while (waitedMs <= LOCK_TIMINGS_MS.wait) {
     try {
       const handle = await deps.openExclusive(path);
       return {
@@ -109,7 +92,7 @@ async function acquireLock(
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       let retryImmediately = false;
       try {
-        if (deps.now() - deps.stat(path).mtimeMs > LOCK_STALE_MS) {
+        if (deps.now() - deps.stat(path).mtimeMs > LOCK_TIMINGS_MS.stale) {
           await deps.unlink(path);
           retryImmediately = true;
         }
@@ -118,9 +101,9 @@ async function acquireLock(
           (statError as NodeJS.ErrnoException).code === "ENOENT";
       }
       if (retryImmediately) continue;
-      if (waitedMs === LOCK_WAIT_MS) return undefined;
-      await delay(deps, LOCK_POLL_MS);
-      waitedMs = Math.min(LOCK_WAIT_MS, waitedMs + LOCK_POLL_MS);
+      if (waitedMs === LOCK_TIMINGS_MS.wait) return undefined;
+      await delay(deps, LOCK_TIMINGS_MS.poll);
+      waitedMs = Math.min(LOCK_TIMINGS_MS.wait, waitedMs + LOCK_TIMINGS_MS.poll);
     }
   }
   return undefined;
@@ -324,7 +307,7 @@ function normalizeOpenAIWindows(
     key: "monthly",
     label: "Monthly",
     usedPercent: 0,
-    unavailableReason: "Unavailable in Phase 3",
+    unavailableReason: OPENAI_MONTHLY_UNAVAILABLE_REASON,
   });
   return windows;
 }
@@ -544,12 +527,11 @@ async function fetchOpenAICodexLive(
           kind: "ok",
           snapshot: {
             providerId: "openai-codex",
-            providerLabel: labelByProvider["openai-codex"],
+            providerLabel: PROVIDER_LABELS["openai-codex"],
             available: true,
-            phase: phaseByProvider["openai-codex"],
             diagnostic: "",
             fetchedAt: now,
-            expiresAt: now + OPENAI_TTL_MS,
+            expiresAt: now + PROVIDER_TTLS_MS["openai-codex"],
             balances: [],
             status: "live",
             sourceLabel: "ChatGPT usage API",
@@ -712,7 +694,7 @@ async function fetchOpenCodeGoLive(
           kind: "ok",
           snapshot: {
             ...snapshot,
-            expiresAt: now + OPENCODE_GO_TTL_MS,
+            expiresAt: now + PROVIDER_TTLS_MS["opencode-go"],
           },
         };
       },
@@ -814,12 +796,11 @@ async function fetchMiniMaxLive(
           kind: "ok",
           snapshot: {
             providerId: "minimax",
-            providerLabel: labelByProvider.minimax,
+            providerLabel: PROVIDER_LABELS.minimax,
             available: true,
-            phase: phaseByProvider.minimax,
             diagnostic: "",
             fetchedAt: now,
-            expiresAt: now + MINIMAX_TTL_MS,
+            expiresAt: now + PROVIDER_TTLS_MS.minimax,
             balances: [],
             status: "live",
             sourceLabel: "MiniMax coding plan API",
@@ -1097,12 +1078,11 @@ async function fetchCommandCodeLive(
           kind: "ok",
           snapshot: {
             providerId: "command-code",
-            providerLabel: labelByProvider["command-code"],
+            providerLabel: PROVIDER_LABELS["command-code"],
             available: true,
-            phase: phaseByProvider["command-code"],
             diagnostic: "",
             fetchedAt: now,
-            expiresAt: now + COMMAND_CODE_TTL_MS,
+            expiresAt: now + PROVIDER_TTLS_MS["command-code"],
             balances,
             status: "live",
             sourceLabel: "Command Code web usage API",
@@ -1121,18 +1101,11 @@ async function fetchCommandCodeLive(
 export function createProviderRegistry(
   deps: UsageDeps,
 ): UsageProviderAdapter[] {
-  const ids: ProviderId[] = [
-    "offline",
-    "openai-codex",
-    "minimax",
-    "opencode-go",
-    "command-code",
-  ];
+  const ids: ProviderId[] = PROVIDER_ORDER;
   return ids.map((id) => ({
     id,
-    label: labelByProvider[id],
+    label: PROVIDER_LABELS[id],
     strategy: id === "offline" ? "offline" : "api",
-    phase: phaseByProvider[id],
     fetch: async (input) => {
       if (id === "openai-codex") return fetchOpenAICodexLive(deps, input);
       if (id === "minimax") return fetchMiniMaxLive(deps, input);
@@ -1142,7 +1115,7 @@ export function createProviderRegistry(
         snapshot: unavailableSnapshot(
           deps,
           id,
-          `${labelByProvider[id]} will be implemented in ${phaseByProvider[id]}.`,
+          `${PROVIDER_LABELS[id]} usage source unavailable.`,
         ),
         shouldWriteCache: false,
       };

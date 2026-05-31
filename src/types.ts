@@ -32,7 +32,6 @@ export interface ProviderUsageSnapshot {
   providerId: ProviderId;
   providerLabel: string;
   available: boolean;
-  phase: string;
   diagnostic: string;
   fetchedAt: number;
   balances: ProviderBalance[];
@@ -58,7 +57,6 @@ export interface UsageProviderAdapter {
   id: ProviderId;
   label: string;
   strategy: ProviderFetchStrategy;
-  phase: string;
   fetch(input?: {
     force?: boolean;
     signal?: AbortSignal;
@@ -135,5 +133,4 @@ export interface UsageDashboardState {
 export interface UnavailableProviderState {
   providerId: ProviderId;
   diagnostic: string;
-  phase: string;
 }
