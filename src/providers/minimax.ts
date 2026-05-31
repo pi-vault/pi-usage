@@ -70,11 +70,29 @@ function normalizeMiniMaxWindows(
       });
     };
 
-    mk("interval", "current_interval_total_count", "current_interval_usage_count", "end_time", "remains_time", "Interval");
-    mk("weekly", "current_weekly_total_count", "current_weekly_usage_count", "weekly_end_time", "weekly_remains_time", "Weekly");
+    mk(
+      "interval",
+      "current_interval_total_count",
+      "current_interval_usage_count",
+      "end_time",
+      "remains_time",
+      "Interval",
+    );
+    mk(
+      "weekly",
+      "current_weekly_total_count",
+      "current_weekly_usage_count",
+      "weekly_end_time",
+      "weekly_remains_time",
+      "Weekly",
+    );
   });
 
-  return { windows, planName: planRaw?.trim() };
+  const planName = planRaw?.trim();
+  return {
+    windows,
+    planName: planName?.replace(/^MiniMax\s+/i, "").trim() || planName,
+  };
 }
 
 function miniMaxResponseError(
@@ -138,7 +156,10 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
               deps.env.MINIMAX_CODING_API_KEY?.trim() ||
               deps.env.MINIMAX_API_KEY?.trim();
             if (!token) {
-              return { kind: "credentials" as const, message: "Missing minimax credentials." };
+              return {
+                kind: "credentials" as const,
+                message: "Missing minimax credentials.",
+              };
             }
 
             const { host, explicitCustom } = resolveMiniMaxHost(deps.env);
@@ -193,18 +214,33 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
               };
             }
 
-            if (!res.ok) return { kind: "error" as const, message: "Live source unavailable." };
-            const data = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
-            if (!data) return { kind: "error" as const, message: "Unsupported response shape." };
+            if (!res.ok)
+              return {
+                kind: "error" as const,
+                message: "Live source unavailable.",
+              };
+            const data = (await res.json().catch(() => undefined)) as
+              | Record<string, unknown>
+              | undefined;
+            if (!data)
+              return {
+                kind: "error" as const,
+                message: "Unsupported response shape.",
+              };
             const responseError = miniMaxResponseError(data);
             if (responseError) return responseError;
 
             const normalized = normalizeMiniMaxWindows(data, now);
             if (normalized.windows.length === 0) {
-              return { kind: "error" as const, message: "Unsupported response shape." };
+              return {
+                kind: "error" as const,
+                message: "Unsupported response shape.",
+              };
             }
 
-            const diagnostics = fallbackUsed ? ["Retried against api.minimaxi.com."] : [];
+            const diagnostics = fallbackUsed
+              ? ["Retried against api.minimaxi.com."]
+              : [];
             return {
               kind: "ok" as const,
               snapshot: {
