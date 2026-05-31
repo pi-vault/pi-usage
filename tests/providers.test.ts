@@ -146,12 +146,12 @@ describe("OpenAI Codex provider", () => {
             rate_limit: {
               primary_window: {
                 used_percent: 25,
-                reset_at: 456,
+                reset_at: 1_780_000_000,
                 limit_window_seconds: 5 * 3600,
               },
               secondary_window: {
                 used_percent: 50,
-                reset_at: 789,
+                reset_at: 1_780_086_400_000,
                 limit_window_seconds: 7 * 24 * 3600,
               },
             },
@@ -186,7 +186,10 @@ describe("OpenAI Codex provider", () => {
     ).toBe("Codex Spark 5h");
     expect(
       live.snapshot.windows.find((w) => w.key === "fiveHour")?.resetAt,
-    ).toBe(456);
+    ).toBe(1_780_000_000_000);
+    expect(live.snapshot.windows.find((w) => w.key === "weekly")?.resetAt).toBe(
+      1_780_086_400_000,
+    );
     expect(live.snapshot.windows.some((w) => w.key === "monthly")).toBe(false);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
@@ -194,6 +197,35 @@ describe("OpenAI Codex provider", () => {
     const cached = await provider.fetch();
     expect(cached.snapshot.status).toBe("cached");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("normalizes epoch-second reset_at to millisecond resetAt", async () => {
+    const root = mkTmp();
+    const provider = openAICodexProvider(
+      createLiveDeps(
+        root,
+        () => 1_000,
+        async () =>
+          new Response(
+            JSON.stringify({
+              rate_limit: {
+                primary_window: {
+                  used_percent: 25,
+                  reset_at: 1_780_000_000,
+                  limit_window_seconds: 5 * 3600,
+                },
+              },
+            }),
+            { status: 200 },
+          ),
+        { OPENAI_CODEX_ACCESS_TOKEN: "t" },
+      ),
+    );
+
+    const resetAt = (await provider.fetch()).snapshot.windows[0]?.resetAt;
+    expect(resetAt).toBe(1_780_000_000_000);
+    expect(new Date(resetAt ?? 0).getUTCFullYear()).toBeGreaterThan(2020);
     rmSync(root, { recursive: true, force: true });
   });
 
