@@ -334,6 +334,14 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
     const state = createInitialState();
     const providers = createProviderRegistry(deps);
+    const liveProviderIds = new Set(
+      providers
+        .filter((provider) => provider.strategy === "api")
+        .map((provider) => provider.id),
+    );
+    const liveProviderSnapshotFiles = new Set(
+      [...liveProviderIds].map((id) => `${id}.json`),
+    );
 
     const emit = (name: string) => {
       pi.events.emit(name, { state: cloneState(state) });
@@ -535,13 +543,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           .mkdir(providerCacheDir(deps), { recursive: true })
           .then(() => {
             cacheWatcher = deps.watch(providerCacheDir(deps), (filename) => {
-              if (
-                filename !== "openai-codex.json" &&
-                filename !== "minimax.json" &&
-                filename !== "opencode-go.json" &&
-                filename !== "command-code.json"
-              )
-                return;
+              if (!filename || !liveProviderSnapshotFiles.has(filename)) return;
               void emitProviderUpdate(false).catch(() => undefined);
             });
           })
@@ -558,10 +560,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     pi.on("model_select", (event, ctx) => {
       updateModelContext(event.model);
       if (
-        state.currentProviderId === "openai-codex" ||
-        state.currentProviderId === "minimax" ||
-        state.currentProviderId === "opencode-go" ||
-        state.currentProviderId === "command-code"
+        state.currentProviderId &&
+        liveProviderIds.has(state.currentProviderId)
       ) {
         void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
       } else {
