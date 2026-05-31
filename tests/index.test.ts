@@ -366,6 +366,10 @@ describe("usage extension", () => {
       deps: {
         agentDir: () => root,
         now: () => Date.parse("2026-05-31T00:00:00Z"),
+        env: {},
+        fetch: vi.fn(async () => {
+          throw new Error("network unavailable");
+        }) as never,
       },
     })(pi as never);
 

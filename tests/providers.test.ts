@@ -29,7 +29,7 @@ function createLiveDeps(
     agentDir: () => root,
     now,
     fetch: fetchImpl,
-    env: { ...deps.env, ...env },
+    env: { ...env },
   };
 }
 
@@ -150,6 +150,10 @@ describe("OpenAI Codex provider", () => {
     expect(
       live.snapshot.windows.find((w) => w.key === "fiveHour")?.resetAt,
     ).toBe(456);
+    expect(
+      live.snapshot.windows.find((w) => w.key === "monthly")
+        ?.unavailableReason,
+    ).toBe("Unavailable from ChatGPT usage API");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
     now += 1_000;
