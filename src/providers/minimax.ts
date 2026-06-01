@@ -3,11 +3,233 @@ import type { UsageDeps } from "../deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../types.ts";
 import {
   fetchWithLiveRuntime,
-  parseDurationMs,
   parseEpochMs,
   retryAfterMs,
   toFinite,
 } from "./runtime.ts";
+
+function finiteFrom(
+  row: Record<string, unknown>,
+  keys: string[],
+): number | undefined {
+  for (const key of keys) {
+    const value = toFinite(row[key]);
+    if (value != null) return value;
+  }
+  return undefined;
+}
+
+function objectFrom(
+  root: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> | undefined {
+  for (const key of keys) {
+    const value = root[key];
+    if (value && typeof value === "object")
+      return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function parseDateLike(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const at = Date.parse(value.trim());
+  return Number.isFinite(at) ? at : undefined;
+}
+
+function durationFromFields(row: Record<string, unknown>): number | undefined {
+  const msFields = ["remains_time", "remains_ms", "remaining_ms", "ttl_ms"];
+  for (const key of msFields) {
+    const value = toFinite(row[key]);
+    if (value != null && value > 0) return Math.round(value);
+  }
+
+  const secFields = [
+    "reset_in_sec",
+    "reset_in_seconds",
+    "remaining_seconds",
+    "ttl_seconds",
+  ];
+  for (const key of secFields) {
+    const value = toFinite(row[key]);
+    if (value != null && value > 0) return Math.round(value * 1000);
+  }
+
+  return undefined;
+}
+
+function normalizeTokenWindow(
+  key: "fiveHour" | "weekly",
+  label: string,
+  row: Record<string, unknown>,
+  now: number,
+): LiveUsageWindow | undefined {
+  const total = finiteFrom(row, [
+    "total_credits",
+    "total_credit",
+    "total",
+    "quota",
+    "limit",
+    "total_count",
+  ]);
+  const usedDirect = finiteFrom(row, [
+    "used_credits",
+    "used_credit",
+    "used",
+    "usage",
+    "used_count",
+  ]);
+  const remaining = finiteFrom(row, [
+    "remaining_credits",
+    "remain_credits",
+    "remaining",
+    "remains",
+    "balance",
+    "left",
+  ]);
+
+  let used = usedDirect;
+  let limit = total;
+
+  if (limit != null && used == null && remaining != null) {
+    used = limit - remaining;
+  }
+  if (limit == null && used != null && remaining != null) {
+    limit = used + remaining;
+  }
+
+  const resetAt =
+    parseEpochMs(
+      row.reset_at ??
+        row.resetAt ??
+        row.resets_at ??
+        row.resetsAt ??
+        row.end_time ??
+        row.expires_at ??
+        row.expire_time,
+    ) ??
+    parseDateLike(
+      row.reset_at ??
+        row.resetAt ??
+        row.resets_at ??
+        row.resetsAt ??
+        row.end_time ??
+        row.expires_at ??
+        row.expire_time,
+    ) ??
+    (() => {
+      const duration = durationFromFields(row);
+      return duration ? now + duration : undefined;
+    })();
+
+  if (limit != null && limit > 0 && used != null) {
+    const boundedUsed = Math.max(0, Math.min(limit, used));
+    return {
+      key,
+      label,
+      used: boundedUsed,
+      limit,
+      unit: "credits",
+      usedPercent: clampPercent((boundedUsed / limit) * 100),
+      resetAt,
+    };
+  }
+
+  const percent = finiteFrom(row, [
+    "used_percent",
+    "usage_percent",
+    "percent",
+    "usedRate",
+    "utilization",
+  ]);
+  if (percent == null) return undefined;
+
+  return {
+    key,
+    label,
+    usedPercent: clampPercent(percent),
+    resetAt,
+  };
+}
+
+function windowFromRemainsRow(
+  row: Record<string, unknown>,
+  key: "fiveHour" | "weekly",
+  now: number,
+): LiveUsageWindow | undefined {
+  const config =
+    key === "fiveHour"
+      ? {
+          label: "5h",
+          totalField: "current_interval_total_count",
+          usedField: "current_interval_usage_count",
+          resetField: row.end_time,
+          remainsField: row.remains_time,
+          remainingPercentField: "current_interval_remaining_percent",
+        }
+      : {
+          label: "Weekly",
+          totalField: "current_weekly_total_count",
+          usedField: "current_weekly_usage_count",
+          resetField: row.weekly_end_time,
+          remainsField: row.weekly_remains_time,
+          remainingPercentField: "current_weekly_remaining_percent",
+        };
+
+  const total = toFinite(row[config.totalField]);
+  const used = toFinite(row[config.usedField]);
+  const resetAt =
+    parseEpochMs(config.resetField) ??
+    (() => {
+      const duration = durationFromFields({
+        remains_time: config.remainsField,
+      });
+      return duration ? now + duration : undefined;
+    })();
+
+  if (total != null && total > 0 && used != null) {
+    const boundedUsed = Math.max(0, Math.min(total, used));
+    return {
+      key,
+      label: config.label,
+      used: boundedUsed,
+      limit: total,
+      unit: "credits",
+      usedPercent: clampPercent((boundedUsed / total) * 100),
+      resetAt,
+    };
+  }
+
+  const remainingPercent = toFinite(row[config.remainingPercentField]);
+  if (remainingPercent == null) return undefined;
+
+  return {
+    key,
+    label: config.label,
+    usedPercent: clampPercent(100 - remainingPercent),
+    resetAt,
+  };
+}
+
+function chooseRemainsWindow(
+  rows: Record<string, unknown>[],
+  key: "fiveHour" | "weekly",
+  now: number,
+): LiveUsageWindow | undefined {
+  const windows = rows
+    .map((row) => windowFromRemainsRow(row, key, now))
+    .filter((window): window is LiveUsageWindow => Boolean(window));
+  if (windows.length === 0) return undefined;
+
+  const withCounts = windows.find(
+    (window) => window.limit != null && window.used != null,
+  );
+  return withCounts ?? windows[0];
+}
 
 function normalizeMiniMaxWindows(
   payload: Record<string, unknown>,
@@ -16,11 +238,15 @@ function normalizeMiniMaxWindows(
   const root = (
     payload.data && typeof payload.data === "object" ? payload.data : payload
   ) as Record<string, unknown>;
-  const fromCategory = Array.isArray(root.category_remains)
+  const rowsRaw = Array.isArray(root.category_remains)
     ? root.category_remains
-    : [];
-  const fromModel = Array.isArray(root.model_remains) ? root.model_remains : [];
-  const rows = fromCategory.length > 0 ? fromCategory : fromModel;
+    : Array.isArray(root.model_remains)
+      ? root.model_remains
+      : [];
+  const rows = rowsRaw.filter(
+    (entry): entry is Record<string, unknown> =>
+      Boolean(entry) && typeof entry === "object",
+  );
 
   const planRaw = [
     root.current_subscribe_title,
@@ -35,58 +261,28 @@ function normalizeMiniMaxWindows(
     root.packageName,
   ].find((v) => typeof v === "string" && v.trim()) as string | undefined;
 
+  const fiveHourRow = objectFrom(root, [
+    "five_hour",
+    "fiveHour",
+    "five_hour_remains",
+    "fiveHourRemains",
+  ]);
+  const weeklyRow = objectFrom(root, [
+    "weekly",
+    "weekly_remains",
+    "weeklyRemains",
+  ]);
+
   const windows: LiveUsageWindow[] = [];
-  rows.forEach((entry, idx) => {
-    if (!entry || typeof entry !== "object") return;
-    const row = entry as Record<string, unknown>;
-    const service =
-      (typeof row.display_name === "string" && row.display_name.trim()) ||
-      (typeof row.category === "string" && row.category.trim()) ||
-      (typeof row.model_name === "string" && row.model_name.trim()) ||
-      `Service ${idx + 1}`;
+  const fiveHour = fiveHourRow
+    ? normalizeTokenWindow("fiveHour", "5h", fiveHourRow, now)
+    : chooseRemainsWindow(rows, "fiveHour", now);
+  const weekly = weeklyRow
+    ? normalizeTokenWindow("weekly", "Weekly", weeklyRow, now)
+    : chooseRemainsWindow(rows, "weekly", now);
 
-    const mk = (
-      key: "interval" | "weekly",
-      totalField: string,
-      remainsField: string,
-      resetField: string,
-      durationField: string,
-      label: string,
-    ) => {
-      const total = toFinite(row[totalField]);
-      const remaining = toFinite(row[remainsField]);
-      if (!total || total <= 0 || remaining == null) return;
-      const used = Math.max(0, Math.min(total, total - remaining));
-      const resetAt = parseEpochMs(row[resetField]);
-      const remainsMs = parseDurationMs(row[durationField]);
-      windows.push({
-        key: `${service}:${key}`,
-        label: `${service} ${label}`,
-        used,
-        limit: total,
-        unit: "requests",
-        usedPercent: Math.round((used / total) * 100),
-        resetAt: resetAt ?? (remainsMs ? now + remainsMs : undefined),
-      });
-    };
-
-    mk(
-      "interval",
-      "current_interval_total_count",
-      "current_interval_usage_count",
-      "end_time",
-      "remains_time",
-      "Interval",
-    );
-    mk(
-      "weekly",
-      "current_weekly_total_count",
-      "current_weekly_usage_count",
-      "weekly_end_time",
-      "weekly_remains_time",
-      "Weekly",
-    );
-  });
+  if (fiveHour) windows.push(fiveHour);
+  if (weekly) windows.push(weekly);
 
   const planName = planRaw?.trim();
   return {
@@ -164,7 +360,7 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
 
             const { host, explicitCustom } = resolveMiniMaxHost(deps.env);
             const chinaHost = "https://api.minimaxi.com";
-            const endpoint = "/v1/api/openplatform/coding_plan/remains";
+            const endpoint = "/v1/token_plan/remains";
 
             const request = async (baseHost: string) => {
               const timeout = new AbortController();
@@ -252,7 +448,7 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
                 expiresAt: now + PROVIDER_TTLS_MS.minimax,
                 balances: [],
                 status: "live",
-                sourceLabel: "MiniMax coding plan API",
+                sourceLabel: "MiniMax token plan API",
                 sourceKind: "live",
                 windows: normalized.windows,
                 diagnostics,
