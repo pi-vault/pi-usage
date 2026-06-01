@@ -16,8 +16,8 @@ Then reload Pi:
 
 ## Usage
 
-- `/usage` — show cached aggregated usage from your local Pi session history.
-- `/usage --refresh` — refresh live provider usage cards (requires providers already configured in Pi).
+- `/usage` — open the usage dashboard without forcing a live refresh. Use this for fast, side-effect-light inspection.
+- `/usage:refresh` — force live provider refresh, rescan local history, then open the usage dashboard. Use this when you want the latest usage data (requires providers already configured in Pi).
 
 ## Setup note
 
