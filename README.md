@@ -23,6 +23,31 @@ Then reload Pi:
 
 Offline totals work from local Pi history. Live provider cards are shown only for providers you have already configured in Pi.
 
+## Event API
+
+`@pi-vault/pi-usage` emits:
+
+- `usage-core:ready`
+- `usage-core:update-current`
+
+Both events send `{ state }` where `state` is a cloned `UsageCoreState` snapshot.
+
+For late subscribers, request the current snapshot via `usage-core:request`:
+
+```ts
+import {
+  USAGE_CORE_REQUEST_EVENT,
+  type UsageCorePayload,
+} from "@pi-vault/pi-usage/events";
+
+pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+  type: "current",
+  reply: ({ state }: UsageCorePayload) => {
+    // Render from latest cloned snapshot.
+  },
+});
+```
+
 ## Acknowledgements
 
 This package borrows ideas from these projects for Pi UX and provider usage fetching approaches:

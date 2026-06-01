@@ -1,5 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createDefaultDeps, type UsageDeps } from "./deps.ts";
+import {
+  USAGE_CORE_READY_EVENT,
+  USAGE_CORE_REQUEST_EVENT,
+  USAGE_CORE_UPDATE_CURRENT_EVENT,
+  type UsageCoreCurrentRequest,
+  type UsageCorePayload,
+} from "./events.ts";
 import { buildInsights, scanOfflineUsage } from "./offline.ts";
 import { createProviderRegistry, providerCacheDir } from "./providers.ts";
 import type { UsageCoreState } from "./types.ts";
@@ -7,8 +14,6 @@ import { buildPeriods } from "./ui/dashboard-model.ts";
 import { openDashboard } from "./ui/dashboard.ts";
 
 const GLOBAL_KEY = "__piUsage" as const;
-const READY_EVENT = "usage-core:ready";
-const UPDATE_CURRENT_EVENT = "usage-core:update-current";
 
 type GlobalUsageState = { initialized: true };
 type ScanToken = { cancelled: boolean };
@@ -85,6 +90,14 @@ function cloneState(state: UsageCoreState): UsageCoreState {
   return JSON.parse(JSON.stringify(state)) as UsageCoreState;
 }
 
+function isCurrentRequest(value: unknown): value is UsageCoreCurrentRequest {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "current" &&
+    typeof (value as { reply?: unknown }).reply === "function"
+  );
+}
 
 export function createUsageExtension(options?: UsageExtensionOptions) {
   const deps = mergeDeps(options?.deps);
@@ -106,7 +119,8 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     );
 
     const emit = (name: string) => {
-      pi.events.emit(name, { state: cloneState(state) });
+      const payload: UsageCorePayload = { state: cloneState(state) };
+      pi.events.emit(name, payload);
     };
 
     let providerRefresh: Promise<void> | null = null;
@@ -237,14 +251,14 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
     const refreshOffline = async (refresh: boolean, token?: ScanToken) => {
       state.loading = true;
-      emit(UPDATE_CURRENT_EVENT);
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
       const result = await scanOfflineUsage(deps, {
         refresh,
         shouldCancel: () => token?.cancelled === true,
       });
       if (token?.cancelled) {
         state.loading = false;
-        emit(UPDATE_CURRENT_EVENT);
+        emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
         return;
       }
       state.offline.periods = buildPeriods(result);
@@ -270,7 +284,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     const bootstrap = async () => {
       await Promise.all([populateProviders(false), refreshOffline(false)]);
       state.diagnostics = ["live runtime ready"];
-      emit(READY_EVENT);
+      emit(USAGE_CORE_READY_EVENT);
     };
 
     const updateModelContext = (
@@ -289,7 +303,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
     const emitProviderUpdate = async (force = false, signal?: AbortSignal) => {
       await populateProviders(force, signal);
-      emit(UPDATE_CURRENT_EVENT);
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     };
 
     const startLiveRuntime = () => {
@@ -312,6 +326,14 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       }
     };
 
+    const unsubscribeRequestCurrent = pi.events.on(
+      USAGE_CORE_REQUEST_EVENT,
+      (payload: unknown) => {
+        if (!isCurrentRequest(payload)) return;
+        payload.reply({ state: cloneState(state) });
+      },
+    );
+
     pi.on("session_start", (_event, ctx) => {
       updateModelContext(ctx.model);
       startLiveRuntime();
@@ -326,16 +348,16 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       ) {
         void emitProviderUpdate(true, ctx.signal).catch(() => undefined);
       } else {
-        emit(UPDATE_CURRENT_EVENT);
+        emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
       }
     });
     pi.on("turn_start", (_event, ctx) => {
       updateModelContext(ctx.model);
-      emit(UPDATE_CURRENT_EVENT);
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     });
     pi.on("turn_end", (_event, ctx) => {
       updateModelContext(ctx.model);
-      emit(UPDATE_CURRENT_EVENT);
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     });
 
     pi.registerCommand("usage", {
@@ -355,7 +377,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         if (parsed.refresh) {
           state.refreshRequested = true;
           state.diagnostics = [...state.diagnostics, "refresh requested"];
-          emit(UPDATE_CURRENT_EVENT);
+          emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
         }
 
         await populateProviders(parsed.refresh);
@@ -378,6 +400,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       periodicRefresh = undefined;
       cacheWatcher?.close();
       cacheWatcher = undefined;
+      unsubscribeRequestCurrent();
       delete globalThis[GLOBAL_KEY];
     });
   };
