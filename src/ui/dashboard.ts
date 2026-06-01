@@ -57,19 +57,26 @@ function formatAbbrev(value: number | undefined | null): string {
   return format(abs / 1_000_000_000, "B");
 }
 
-function formatReset(resetAt: number | undefined): string {
-  if (!resetAt) return "Reset unavailable";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).formatToParts(new Date(resetAt));
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `Resets ${get("month")} ${get("day")}, ${get("year")} ${get("hour")}:${get("minute")} ${get("dayPeriod")}`;
+function formatResetCompact(
+  resetAt: number | undefined,
+  now = Date.now(),
+): string {
+  if (!resetAt) return "(reset unavailable)";
+  const resetDate = new Date(resetAt);
+  const nowDate = new Date(now);
+  const hours = String(resetDate.getHours()).padStart(2, "0");
+  const minutes = String(resetDate.getMinutes()).padStart(2, "0");
+  const timeStr = `${hours}:${minutes}`;
+  const isSameDay =
+    resetDate.getFullYear() === nowDate.getFullYear() &&
+    resetDate.getMonth() === nowDate.getMonth() &&
+    resetDate.getDate() === nowDate.getDate();
+  if (isSameDay) {
+    return `(resets ${timeStr})`;
+  }
+  const monthStr = resetDate.toLocaleDateString("en-US", { month: "short" });
+  const day = resetDate.getDate();
+  return `(resets ${timeStr} on ${day} ${monthStr})`;
 }
 
 function normalizePlan(provider: ProviderUsageSnapshot): string | undefined {
@@ -97,7 +104,8 @@ function providerHeading(
 function renderBar(usedPercent: number, width = 24): string {
   const leftPercent = Math.max(0, 100 - usedPercent);
   const fill = Math.round((leftPercent / 100) * width);
-  return `[${"█".repeat(fill)}${"░".repeat(Math.max(0, width - fill))}] ${leftPercent}% left`;
+  const displayPercent = Math.round(leftPercent);
+  return `[${"█".repeat(fill)}${"░".repeat(Math.max(0, width - fill))}] ${displayPercent}% left`;
 }
 
 function formatRatio(
@@ -115,20 +123,28 @@ function formatRatio(
   return `${formatAbbrev(window.used)}/${formatAbbrev(window.limit)} ${window.unit}`;
 }
 
-function renderWindow(
-  window: ProviderUsageSnapshot["windows"][number],
-): string {
-  if (window.unavailableReason) {
-    return `${window.label}: ${window.unavailableReason}`;
-  }
-  const ratio = formatRatio(window);
-  const left = ratio
-    ? `${window.label}: ${ratio} ${renderBar(window.usedPercent)}`
-    : `${window.label}: ${renderBar(window.usedPercent)}`;
-  const resetText = window.resetAt
-    ? formatReset(window.resetAt)
-    : "Reset unavailable";
-  return `${left} • ${resetText}`;
+function renderQuotaWindows(
+  windows: ProviderUsageSnapshot["windows"],
+): string[] {
+  const availableWindows = windows.filter((w) => !w.unavailableReason);
+  const maxLabelWidth =
+    availableWindows.length > 0
+      ? Math.max(...availableWindows.map((w) => w.label.length))
+      : 0;
+
+  return windows.map((window) => {
+    if (window.unavailableReason) {
+      return `${window.label}: ${window.unavailableReason}`;
+    }
+    const labelPad = window.label.padEnd(maxLabelWidth);
+    const bar = renderBar(window.usedPercent);
+    const resetText = formatResetCompact(window.resetAt);
+    const ratio = formatRatio(window);
+    if (ratio) {
+      return `${labelPad}: ${bar} ${resetText} - ${ratio}`;
+    }
+    return `${labelPad}: ${bar} ${resetText}`;
+  });
 }
 
 function providerDiagnostics(provider: ProviderUsageSnapshot): string[] {
@@ -289,7 +305,11 @@ function legendLines(width: number): string[] {
   return [firstLine, secondLine];
 }
 
-function tabLines(labels: string[], selectedIndex: number, width: number): string[] {
+function tabLines(
+  labels: string[],
+  selectedIndex: number,
+  width: number,
+): string[] {
   const tabs = labels.map((label, index) =>
     index === selectedIndex ? `[${label}]` : label,
   );
@@ -421,9 +441,7 @@ export class UsageDashboardComponent implements Component {
       if (selected.windows.length === 0 && selected.balances.length === 0) {
         lines.push("No live usage details.");
       } else {
-        for (const window of selected.windows) {
-          lines.push(renderWindow(window));
-        }
+        lines.push(...renderQuotaWindows(selected.windows));
         for (const balance of selected.balances) {
           lines.push(
             renderBalanceLine(balance.label, balance.remaining, balance.unit),
