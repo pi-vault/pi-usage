@@ -74,18 +74,6 @@ export function detectProviderFromModel(
   return undefined;
 }
 
-function parseUsageArgs(
-  args: string,
-): { ok: true; refresh: boolean } | { ok: false; unknown: string[] } {
-  const parts = args
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const unknown = parts.filter((part) => part !== "--refresh");
-  if (unknown.length > 0) return { ok: false, unknown };
-  return { ok: true, refresh: parts.includes("--refresh") };
-}
-
 function cloneState(state: UsageCoreState): UsageCoreState {
   return JSON.parse(JSON.stringify(state)) as UsageCoreState;
 }
@@ -360,37 +348,60 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     });
 
+    const rejectArgs = (args: string) => args.trim() !== "";
+
+    const prepareUsageDashboard = async (refresh: boolean) => {
+      if (refresh) {
+        state.refreshRequested = true;
+        state.diagnostics = [...state.diagnostics, "refresh requested"];
+        emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+      }
+
+      await populateProviders(refresh);
+      const scanToken: ScanToken = { cancelled: false };
+      const shouldScan =
+        refresh || (state.offline.periods.length === 0 && !state.loading);
+      const scan = shouldScan
+        ? refreshOffline(refresh, scanToken)
+        : undefined;
+      return {
+        cancelScan: () => {
+          scanToken.cancelled = true;
+        },
+        scan,
+      };
+    };
+
     pi.registerCommand("usage", {
       description: "Open the usage dashboard",
       handler: async (args, ctx) => {
         if (!ctx.hasUI) return;
-
-        const parsed = parseUsageArgs(args);
-        if (!parsed.ok) {
+        if (rejectArgs(args)) {
           ctx.ui.notify(
-            `Unknown /usage option(s): ${parsed.unknown.join(", ")}. Supported: --refresh`,
+            "Unknown /usage arguments. Use /usage with no args, or /usage:refresh to force a refresh.",
             "warning",
           );
           return;
         }
+        const { cancelScan, scan } = await prepareUsageDashboard(false);
+        await openDashboard(ctx, state, cancelScan);
+        await scan;
+      },
+    });
 
-        if (parsed.refresh) {
-          state.refreshRequested = true;
-          state.diagnostics = [...state.diagnostics, "refresh requested"];
-          emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+    pi.registerCommand("usage:refresh", {
+      description: "Refresh provider usage and open the usage dashboard",
+      handler: async (args, ctx) => {
+        if (!ctx.hasUI) return;
+        if (rejectArgs(args)) {
+          ctx.ui.notify(
+            "Unknown /usage:refresh arguments. /usage:refresh does not take any arguments.",
+            "warning",
+          );
+          return;
         }
-
-        await populateProviders(parsed.refresh);
-        const scanToken: ScanToken = { cancelled: false };
-        const shouldScan =
-          parsed.refresh ||
-          (state.offline.periods.length === 0 && !state.loading);
-        const scan = shouldScan
-          ? refreshOffline(parsed.refresh, scanToken)
-          : undefined;
-        await openDashboard(ctx, state, () => {
-          scanToken.cancelled = true;
-        });
+        const { cancelScan, scan } = await prepareUsageDashboard(true);
+        await openDashboard(ctx, state, cancelScan);
         await scan;
       },
     });

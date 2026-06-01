@@ -1,10 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -168,10 +162,10 @@ describe("package config", () => {
 });
 
 describe("usage extension", () => {
-  it("registers /usage", () => {
+  it("registers /usage and /usage:refresh", () => {
     const pi = createPiMock();
     createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    expect(pi.registerCommandCalls).toEqual(["usage"]);
+    expect(pi.registerCommandCalls).toEqual(["usage", "usage:refresh"]);
   });
 
   it("duplicate real-mode init is ignored", () => {
@@ -189,7 +183,7 @@ describe("usage extension", () => {
     globalThis.__piUsage = { initialized: true };
     const pi = createPiMock();
     createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    expect(pi.registerCommandCalls).toEqual(["usage"]);
+    expect(pi.registerCommandCalls).toEqual(["usage", "usage:refresh"]);
   });
 
   it("session_shutdown clears guard", () => {
@@ -207,7 +201,13 @@ describe("usage extension", () => {
     await pi.runCommand("usage", "", { hasUI: false });
   });
 
-  it("/usage --refresh marks diagnostic", async () => {
+  it("/usage:refresh without UI is no-op", async () => {
+    const pi = createPiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    await pi.runCommand("usage:refresh", "", { hasUI: false });
+  });
+
+  it("/usage:refresh marks diagnostic and updates state", async () => {
     const pi = createPiMock();
     const ui = createUiMock();
     createUsageExtension({
@@ -221,7 +221,7 @@ describe("usage extension", () => {
     pi.trigger("session_start");
     await waitForMicrotasks();
 
-    await pi.runCommand("usage", "--refresh", { hasUI: true, ui });
+    await pi.runCommand("usage:refresh", "", { hasUI: true, ui });
     expect(ui.custom).toHaveBeenCalled();
     expect(ui.render().join("\n")).toContain("[Today]");
 
@@ -243,13 +243,67 @@ describe("usage extension", () => {
     expect(hasRefreshPayload).toBe(true);
   });
 
-  it("unknown args warn and stop", async () => {
+  it("/usage opens the dashboard without marking refresh state", async () => {
     const pi = createPiMock();
     const ui = createUiMock();
     createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    pi.trigger("session_start");
+    await waitForMicrotasks();
+
+    const updatesBefore = pi.events.emit.mock.calls.filter(
+      (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
+    ).length;
+
+    await pi.runCommand("usage", "", { hasUI: true, ui });
+    expect(ui.custom).toHaveBeenCalled();
+
+    const updatePayloads = pi.events.emit.mock.calls
+      .filter((call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT)
+      .slice(updatesBefore)
+      .map(
+        (call) =>
+          (
+            call[1] as {
+              state: { refreshRequested: boolean; diagnostics: string[] };
+            }
+          ).state,
+      );
+    expect(
+      updatePayloads.every(
+        (state) =>
+          state.refreshRequested === false &&
+          !state.diagnostics.includes("refresh requested"),
+      ),
+    ).toBe(true);
+  });
+
+  it("/usage rejects non-empty args and does not open the dashboard", async () => {
+    const pi = createPiMock();
+    const ui = createUiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    pi.trigger("session_start");
+    await waitForMicrotasks();
 
     await pi.runCommand("usage", "--wat", { hasUI: true, ui });
-    expect(ui.notify).toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("/usage:refresh"),
+      "warning",
+    );
+    expect(ui.custom).not.toHaveBeenCalled();
+  });
+
+  it("/usage:refresh rejects non-empty args and does not open the dashboard", async () => {
+    const pi = createPiMock();
+    const ui = createUiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    pi.trigger("session_start");
+    await waitForMicrotasks();
+
+    await pi.runCommand("usage:refresh", "--wat", { hasUI: true, ui });
+    expect(ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("does not take any arguments"),
+      "warning",
+    );
     expect(ui.custom).not.toHaveBeenCalled();
   });
 
@@ -260,7 +314,20 @@ describe("usage extension", () => {
     await waitForMicrotasks();
 
     const before = pi.events.emit.mock.calls.length;
-    await pi.runCommand("usage", "--refresh", { hasUI: false });
+    await pi.runCommand("usage", "--wat", { hasUI: false });
+    const after = pi.events.emit.mock.calls.length;
+
+    expect(after).toBe(before);
+  });
+
+  it("/usage:refresh without UI has no side effects", async () => {
+    const pi = createPiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+    pi.trigger("session_start");
+    await waitForMicrotasks();
+
+    const before = pi.events.emit.mock.calls.length;
+    await pi.runCommand("usage:refresh", "--wat", { hasUI: false });
     const after = pi.events.emit.mock.calls.length;
 
     expect(after).toBe(before);
