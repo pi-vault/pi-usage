@@ -134,13 +134,13 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         state.providers.find((s) => s.providerId === state.currentProviderId) ??
         null;
       state.currentProviderSnapshot = current;
-      const hasCompatibilityWindows =
-        current?.providerId === "openai-codex" &&
-        current.windows.some(
+      const hasCompatibilityWindows = Boolean(
+        current?.windows.some(
           (window) =>
             (window.key === "fiveHour" || window.key === "weekly") &&
             !window.unavailableReason,
-        );
+        ),
+      );
       state.compatibility.currentLiveProviderId =
         hasCompatibilityWindows && current ? current.providerId : null;
       state.compatibility.currentLiveProviderSnapshot = state.compatibility

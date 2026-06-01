@@ -18,9 +18,9 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 
 export const PROVIDER_TTLS_MS = {
   "openai-codex": 5 * 60 * 1000,
-  minimax: 60 * 1000,
-  "opencode-go": 60 * 1000,
-  "command-code": 60 * 1000,
+  minimax: 5 * 60 * 1000,
+  "opencode-go": 5 * 60 * 1000,
+  "command-code": 5 * 60 * 1000,
 } as const;
 
 export const LOCK_TIMINGS_MS = {
