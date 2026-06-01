@@ -8,6 +8,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  USAGE_CORE_READY_EVENT,
+  USAGE_CORE_REQUEST_EVENT,
+  USAGE_CORE_UPDATE_CURRENT_EVENT,
+} from "../src/events.ts";
 import { createDefaultDeps } from "../src/deps.ts";
 import { createUsageExtension } from "../src/index.ts";
 import { createProviderRegistry } from "../src/providers.ts";
@@ -17,7 +22,8 @@ type CommandContext = { hasUI: boolean; ui?: ReturnType<typeof createUiMock> };
 type PiMock = {
   emitted: Array<{ name: string; payload: unknown }>;
   events: {
-    emit: ReturnType<typeof vi.fn>;
+    emit: ReturnType<typeof vi.fn<(name: string, payload: unknown) => void>>;
+    on: (name: string, handler: (...args: unknown[]) => void) => () => void;
   };
   registerCommandCalls: string[];
   registerCommand: (
@@ -39,15 +45,33 @@ function createPiMock(): PiMock {
     { handler: (args: string, ctx: CommandContext) => Promise<void> }
   >();
   const events = new Map<string, Array<(...args: unknown[]) => void>>();
+  const busEvents = new Map<string, Array<(...args: unknown[]) => void>>();
   const emitted: Array<{ name: string; payload: unknown }> = [];
-  const emit = vi.fn((name: string, payload: unknown) => {
+  const emit = vi.fn<(name: string, payload: unknown) => void>((name, payload) => {
     emitted.push({ name, payload });
+    for (const handler of busEvents.get(name) ?? []) {
+      handler(payload);
+    }
   });
   const registerCommandCalls: string[] = [];
 
   return {
     emitted,
-    events: { emit },
+    events: {
+      emit,
+      on: (name, handler) => {
+        const list = busEvents.get(name) ?? [];
+        list.push(handler);
+        busEvents.set(name, list);
+        return () => {
+          const current = busEvents.get(name) ?? [];
+          busEvents.set(
+            name,
+            current.filter((entry) => entry !== handler),
+          );
+        };
+      },
+    },
     registerCommandCalls,
     registerCommand: (name, options) => {
       registerCommandCalls.push(name);
@@ -102,10 +126,11 @@ async function waitForMicrotasks(): Promise<void> {
 }
 
 async function waitForEvent(pi: PiMock, name: string): Promise<void> {
-  for (let i = 0; i < 50; i += 1) {
+  for (let i = 0; i < 200; i += 1) {
     if (pi.emitted.some((event) => event.name === name)) return;
     await waitForMicrotasks();
   }
+  throw new Error(`timed out waiting for ${name}`);
 }
 
 async function waitForCondition(
@@ -128,6 +153,17 @@ describe("package config", () => {
       pi: { extensions: string[] };
     };
     expect(pkg.pi.extensions).toEqual(["./src/index.ts"]);
+  });
+
+  it("exports root, events, and types modules", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      exports: Record<string, string>;
+    };
+    expect(pkg.exports).toEqual({
+      ".": "./src/index.ts",
+      "./events": "./src/events.ts",
+      "./types": "./src/types.ts",
+    });
   });
 });
 
@@ -190,7 +226,7 @@ describe("usage extension", () => {
     expect(ui.render().join("\n")).toContain("[Today]");
 
     const updateCalls = pi.events.emit.mock.calls.filter(
-      (call) => call[0] === "usage-core:update-current",
+      (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
     );
     expect(updateCalls.length).toBeGreaterThan(0);
 
@@ -326,6 +362,109 @@ describe("usage extension", () => {
     ).toBe(true);
   });
 
+  it("replies synchronously with current state before session_start", () => {
+    const pi = createPiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+
+    let reply: unknown;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: (payload: unknown) => {
+        reply = payload;
+      },
+    });
+
+    expect(reply).toEqual(
+      expect.objectContaining({
+        state: expect.objectContaining({ generatedAt: 0, providers: [] }),
+      }),
+    );
+  });
+
+  it("replies with latest state and clones request payloads", async () => {
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        agentDir: (() => "/definitely/missing") as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    let first: { state: { diagnostics: string[]; generatedAt: number } } | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: (payload: {
+        state: { diagnostics: string[]; generatedAt: number };
+      }) => {
+        first = payload;
+      },
+    });
+    first?.state.diagnostics.push("tampered");
+
+    let second: { state: { diagnostics: string[]; generatedAt: number } } | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: (payload: {
+        state: { diagnostics: string[]; generatedAt: number };
+      }) => {
+        second = payload;
+      },
+    });
+
+    expect(first?.state.diagnostics).toContain("tampered");
+    expect(second?.state.diagnostics).not.toContain("tampered");
+    expect(second?.state.generatedAt).toBe(1);
+  });
+
+  it("ignores malformed usage-core requests", () => {
+    const pi = createPiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+
+    expect(() => {
+      pi.events.emit(USAGE_CORE_REQUEST_EVENT, undefined);
+      pi.events.emit(USAGE_CORE_REQUEST_EVENT, { type: "current" });
+      pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+        type: "unsupported",
+        reply: () => undefined,
+      });
+    }).not.toThrow();
+  });
+
+  it("unsubscribes request handler on session_shutdown", () => {
+    const pi = createPiMock();
+    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
+
+    pi.trigger("session_shutdown");
+
+    const reply = vi.fn();
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, { type: "current", reply });
+    expect(reply).not.toHaveBeenCalled();
+  });
+
+  it("keeps ready and update event payloads compatible for bus listeners", async () => {
+    const pi = createPiMock();
+    const ready = vi.fn();
+    const update = vi.fn();
+    pi.events.on(USAGE_CORE_READY_EVENT, ready);
+    pi.events.on(USAGE_CORE_UPDATE_CURRENT_EVENT, update);
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        agentDir: (() => "/definitely/missing") as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: undefined });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    expect(ready).toHaveBeenCalledWith({ state: expect.any(Object) });
+    expect(update).toHaveBeenCalledWith({ state: expect.any(Object) });
+    pi.trigger("session_shutdown");
+  });
+
   it("emits state payload entries", async () => {
     const pi = createPiMock();
     createUsageExtension({
@@ -349,9 +488,9 @@ describe("usage extension", () => {
       },
     })(pi as never);
     pi.trigger("session_start");
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
     expect(pi.events.emit).toHaveBeenCalledWith(
-      "usage-core:ready",
+      USAGE_CORE_READY_EVENT,
       expect.objectContaining({ state: expect.any(Object) }),
     );
   });
@@ -394,8 +533,8 @@ describe("usage extension", () => {
     })(pi as never);
 
     pi.trigger("session_start");
-    await waitForEvent(pi, "usage-core:ready");
-    const ready = pi.emitted.find((event) => event.name === "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+    const ready = pi.emitted.find((event) => event.name === USAGE_CORE_READY_EVENT);
     const state = (
       ready?.payload as {
         state: {
@@ -445,9 +584,9 @@ describe("usage extension", () => {
       },
     })(pi as never);
     pi.trigger("session_start");
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
 
-    const ready = pi.emitted.find((event) => event.name === "usage-core:ready");
+    const ready = pi.emitted.find((event) => event.name === USAGE_CORE_READY_EVENT);
     const state = (
       ready?.payload as { state: { provider?: string; usage?: unknown } }
     ).state;
@@ -480,7 +619,7 @@ describe("usage extension", () => {
       },
     })(pi as never);
     pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
     const before = fetchMock.mock.calls.length;
 
     const context = { model: { provider: "openai-codex", id: "gpt-5-codex" } };
@@ -516,7 +655,7 @@ describe("usage extension", () => {
     })(pi as never);
 
     pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
 
     pi.trigger(
       "model_select",
@@ -526,7 +665,7 @@ describe("usage extension", () => {
 
     await waitForCondition(() =>
       pi.emitted.some((event) => {
-        if (event.name !== "usage-core:update-current") return false;
+        if (event.name !== USAGE_CORE_UPDATE_CURRENT_EVENT) return false;
         const payload = event.payload as {
           state: { currentModelLabel?: string };
         };
@@ -536,7 +675,7 @@ describe("usage extension", () => {
 
     const lastUpdate = [...pi.emitted]
       .reverse()
-      .find((event) => event.name === "usage-core:update-current");
+      .find((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT);
     const state = (
       lastUpdate?.payload as {
         state: {
@@ -570,7 +709,7 @@ describe("usage extension", () => {
       },
     })(pi as never);
     pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
     await waitForMicrotasks();
     const before = fetchMock.mock.calls.length;
 
@@ -599,11 +738,11 @@ describe("usage extension", () => {
       },
     })(pi as never);
     pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, "usage-core:ready");
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
     await waitForMicrotasks();
     const updateEventCount = () =>
       pi.events.emit.mock.calls.filter(
-        (call) => call[0] === "usage-core:update-current",
+        (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
       ).length;
     const before = updateEventCount();
 
