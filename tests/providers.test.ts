@@ -687,7 +687,7 @@ describe("OpenCode Go provider", () => {
 });
 
 describe("MiniMax provider", () => {
-  it("fetches remains API and parses remaining counts", async () => {
+  it("fetches token plan API and parses live model remains windows", async () => {
     const root = mkTmp();
     const provider = minimaxProvider(
       createLiveDeps(
@@ -699,15 +699,20 @@ describe("MiniMax provider", () => {
           expect(headers.get("mm-api-source")).toBe("pi-coding-agent");
           return new Response(
             JSON.stringify({
-              category_remains: [
+              model_remains: [
                 {
-                  display_name: "Coding Plan",
+                  start_time: 1_000,
+                  end_time: 19_000,
+                  remains_time: 18_000,
                   current_interval_total_count: 100,
                   current_interval_usage_count: 40,
-                  end_time: 2_000,
+                  model_name: "general",
                   current_weekly_total_count: 500,
                   current_weekly_usage_count: 450,
-                  weekly_end_time: 3_000,
+                  weekly_end_time: 31_000,
+                  weekly_remains_time: 30_000,
+                  current_interval_remaining_percent: 60,
+                  current_weekly_remaining_percent: 10,
                 },
               ],
             }),
@@ -723,9 +728,13 @@ describe("MiniMax provider", () => {
 
     const res = await provider.fetch();
     expect(res.snapshot.status).toBe("live");
-    expect(res.snapshot.windows[0].used).toBe(60);
+    expect(res.snapshot.windows[0].key).toBe("fiveHour");
+    expect(res.snapshot.windows[0].used).toBe(40);
     expect(res.snapshot.windows[0].limit).toBe(100);
-    expect(res.snapshot.windows[1].used).toBe(50);
+    expect(res.snapshot.windows[0].unit).toBe("credits");
+    expect(res.snapshot.windows[1].key).toBe("weekly");
+    expect(res.snapshot.windows[1].used).toBe(450);
+    expect(res.snapshot.windows[1].limit).toBe(500);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -738,14 +747,11 @@ describe("MiniMax provider", () => {
         new Response(
           JSON.stringify({
             data: {
-              model_remains: [
-                {
-                  model_name: "m2",
-                  current_interval_total_count: 10,
-                  current_interval_usage_count: 9,
-                  remains_time: 30,
-                },
-              ],
+              five_hour: {
+                total_credits: 10,
+                remaining_credits: 9,
+                remains_time: 30,
+              },
             },
           }),
           { status: 200 },
@@ -773,13 +779,10 @@ describe("MiniMax provider", () => {
         async () =>
           new Response(
             JSON.stringify({
-              category_remains: [
-                {
-                  display_name: "Search",
-                  current_interval_total_count: 100,
-                  current_interval_usage_count: 25,
-                },
-              ],
+              five_hour: {
+                total_credits: 100,
+                remaining_credits: 25,
+              },
             }),
             { status: 200 },
           ),
@@ -788,6 +791,7 @@ describe("MiniMax provider", () => {
     );
 
     const window = (await provider.fetch()).snapshot.windows[0];
+    expect(window.key).toBe("fiveHour");
     expect(window.used).toBe(75);
     expect(window.limit).toBe(100);
     expect(window.resetAt).toBeUndefined();
@@ -805,17 +809,16 @@ describe("MiniMax provider", () => {
           new Response(
             JSON.stringify({
               current_subscribe_title: "MiniMax Pro",
-              category_remains: [
-                {
-                  display_name: "Search",
-                  current_interval_total_count: "100",
-                  current_interval_usage_count: "25",
-                  remains_time: 30,
-                  current_weekly_total_count: 500,
-                  current_weekly_usage_count: 450,
-                  weekly_remains_time: 240_000,
-                },
-              ],
+              five_hour: {
+                total_credits: "100",
+                remaining_credits: "25",
+                reset_in_sec: 30,
+              },
+              weekly: {
+                total_credits: 500,
+                used_credits: 450,
+                remains_time: 240_000,
+              },
             }),
             { status: 200 },
           ),
@@ -827,9 +830,7 @@ describe("MiniMax provider", () => {
     expect(snapshot.planName).toBe("Pro");
     expect(snapshot.windows[0].resetAt).toBe(31_000);
     expect(snapshot.windows[1].resetAt).toBe(241_000);
-    expect(snapshot.windows.some((window) => window.key === "monthly")).toBe(
-      false,
-    );
+    expect(snapshot.windows.some((window) => window.key === "monthly")).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -876,7 +877,7 @@ describe("MiniMax provider", () => {
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][0]).toBe(
-      "https://minimax.example.test/v1/api/openplatform/coding_plan/remains",
+      "https://minimax.example.test/v1/token_plan/remains",
     );
     rmSync(root, { recursive: true, force: true });
   });
@@ -889,13 +890,10 @@ describe("MiniMax provider", () => {
       async () =>
         new Response(
           JSON.stringify({
-            category_remains: [
-              {
-                display_name: "Search",
-                current_interval_total_count: 100,
-                current_interval_usage_count: 25,
-              },
-            ],
+            five_hour: {
+              total_credits: 100,
+              remaining_credits: 25,
+            },
           }),
           { status: 200 },
         ),
@@ -910,6 +908,152 @@ describe("MiniMax provider", () => {
     expect(snapshot.diagnostics.join(" ")).toContain(
       "Live cache is unavailable",
     );
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("supports percent-only token plan windows", async () => {
+    const root = mkTmp();
+    const provider = minimaxProvider(
+      createLiveDeps(
+        root,
+        () => 1_000,
+        async () =>
+          new Response(
+            JSON.stringify({
+              model_remains: [
+                {
+                  model_name: "general",
+                  end_time: 61_000,
+                  weekly_end_time: 121_000,
+                  current_interval_remaining_percent: 70,
+                  current_weekly_remaining_percent: 20,
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        { MINIMAX_API_KEY: "token" },
+      ),
+    );
+
+    const snapshot = (await provider.fetch()).snapshot;
+    expect(snapshot.windows[0]).toMatchObject({ key: "fiveHour", usedPercent: 30 });
+    expect(snapshot.windows[0].used).toBeUndefined();
+    expect(snapshot.windows[1]).toMatchObject({ key: "weekly", usedPercent: 80 });
+    expect(snapshot.windows[1].limit).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("prefers count-based remains rows over percent-only rows", async () => {
+    const root = mkTmp();
+    const provider = minimaxProvider(
+      createLiveDeps(
+        root,
+        () => 1_000,
+        async () =>
+          new Response(
+            JSON.stringify({
+              model_remains: [
+                {
+                  model_name: "video",
+                  current_interval_remaining_percent: 100,
+                  current_weekly_remaining_percent: 100,
+                },
+                {
+                  model_name: "general",
+                  current_interval_total_count: 50,
+                  current_interval_usage_count: 10,
+                  current_weekly_total_count: 200,
+                  current_weekly_usage_count: 40,
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        { MINIMAX_API_KEY: "token" },
+      ),
+    );
+
+    const snapshot = (await provider.fetch()).snapshot;
+    expect(snapshot.windows[0]).toMatchObject({
+      key: "fiveHour",
+      used: 10,
+      limit: 50,
+      usedPercent: 20,
+    });
+    expect(snapshot.windows[1]).toMatchObject({
+      key: "weekly",
+      used: 40,
+      limit: 200,
+      usedPercent: 20,
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("parses ISO reset timestamps and utilization fields", async () => {
+    const root = mkTmp();
+    const provider = minimaxProvider(
+      createLiveDeps(
+        root,
+        () => 1_000,
+        async () =>
+          new Response(
+            JSON.stringify({
+              five_hour: {
+                utilization: 17.6,
+                resets_at: "2026-05-31T12:00:00Z",
+              },
+              weekly: {
+                utilization: 41.2,
+                resetsAt: "2026-06-02T03:30:00Z",
+              },
+            }),
+            { status: 200 },
+          ),
+        { MINIMAX_API_KEY: "token" },
+      ),
+    );
+
+    const snapshot = (await provider.fetch()).snapshot;
+    expect(snapshot.windows[0]).toMatchObject({
+      key: "fiveHour",
+      usedPercent: 18,
+      resetAt: Date.parse("2026-05-31T12:00:00Z"),
+    });
+    expect(snapshot.windows[1]).toMatchObject({
+      key: "weekly",
+      usedPercent: 41,
+      resetAt: Date.parse("2026-06-02T03:30:00Z"),
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("treats reset_in_seconds as seconds even for weekly-sized values", async () => {
+    const root = mkTmp();
+    const provider = minimaxProvider(
+      createLiveDeps(
+        root,
+        () => 1_000,
+        async () =>
+          new Response(
+            JSON.stringify({
+              weekly: {
+                total_credits: 500,
+                used_credits: 100,
+                reset_in_seconds: 604_800,
+              },
+            }),
+            { status: 200 },
+          ),
+        { MINIMAX_API_KEY: "token" },
+      ),
+    );
+
+    const snapshot = (await provider.fetch()).snapshot;
+    expect(snapshot.windows[0]).toMatchObject({
+      key: "weekly",
+      resetAt: 604_801_000,
+    });
     rmSync(root, { recursive: true, force: true });
   });
 });

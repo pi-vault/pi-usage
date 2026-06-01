@@ -110,7 +110,7 @@ function mkState(): UsageCoreState {
         fetchedAt: 0,
         balances: [],
         status: "live",
-        sourceLabel: "MiniMax coding plan API",
+        sourceLabel: "MiniMax token plan API",
         sourceKind: "live",
         staleAgeMs: 0,
         windows: [],

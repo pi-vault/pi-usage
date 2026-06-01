@@ -595,6 +595,73 @@ describe("usage extension", () => {
     expect(state.usage).toBeUndefined();
   });
 
+  it("populates compatibility fields for MiniMax token plan windows", async () => {
+    const root = mkTmp();
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        env: { ...createDefaultDeps().env, MINIMAX_API_KEY: "token" },
+        agentDir: (() => root) as never,
+        fetch: vi.fn(
+          async (url) =>
+            url.toString().includes("token_plan")
+              ? new Response(
+                  JSON.stringify({
+                    five_hour: { usage_percent: 12 },
+                    weekly: { usage_percent: 34 },
+                  }),
+                  { status: 200 },
+                )
+              : new Response(JSON.stringify({}), { status: 500 }),
+        ) as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: { provider: "minimax", id: "m2" } });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    pi.trigger(
+      "model_select",
+      { model: { provider: "minimax", id: "m2" } },
+      { model: { provider: "minimax", id: "m2" } },
+    );
+    await waitForCondition(() =>
+      pi.emitted.some((event) => {
+        if (event.name !== USAGE_CORE_UPDATE_CURRENT_EVENT) return false;
+        const payload = event.payload as {
+          state: {
+            compatibility: { currentLiveProviderId: string | null };
+          };
+        };
+        return payload.state.compatibility.currentLiveProviderId === "minimax";
+      }),
+    );
+
+    const update = [...pi.emitted]
+      .reverse()
+      .find((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT);
+    const state = (
+      update?.payload as {
+        state: {
+          provider?: string;
+          usage?: { provider: string; windows: Array<{ label: string; usedPercent: number }> };
+          compatibility: { currentLiveProviderId: string | null };
+        };
+      }
+    ).state;
+
+    expect(state.compatibility.currentLiveProviderId).toBe("minimax");
+    expect(state.provider).toBe("MiniMax");
+    expect(state.usage?.provider).toBe("minimax");
+    expect(state.usage?.windows).toEqual([
+      { label: "5h", usedPercent: 12 },
+      { label: "Weekly", usedPercent: 34 },
+    ]);
+    pi.trigger("session_shutdown");
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("turn events update context without live fetches", async () => {
     const root = mkTmp();
     const pi = createPiMock();
