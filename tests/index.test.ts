@@ -93,6 +93,7 @@ function createPiMock(): PiMock {
 
 function createUiMock() {
   const notify = vi.fn();
+  const requestRender = vi.fn();
   let component:
     | {
         render: (width: number) => string[];
@@ -101,8 +102,11 @@ function createUiMock() {
     | undefined;
   const custom = vi.fn(async (factory: (...args: unknown[]) => unknown) => {
     component = factory(
-      { terminal: { columns: 80 } },
-      {},
+      { terminal: { columns: 80 }, requestRender },
+      {
+        fg: (_color: string, text: string) => text,
+        bold: (text: string) => text,
+      },
       {},
       () => undefined,
     ) as typeof component;
@@ -110,6 +114,7 @@ function createUiMock() {
   return {
     notify,
     custom,
+    requestRender,
     render: (width = 80) => component?.render(width) ?? [],
     handleInput: (data: string) => component?.handleInput?.(data),
   };
@@ -223,7 +228,8 @@ describe("usage extension", () => {
 
     await pi.runCommand("usage:refresh", "", { hasUI: true, ui });
     expect(ui.custom).toHaveBeenCalled();
-    expect(ui.render().join("\n")).toContain("[Today]");
+    // The dashboard defaults to the All Time period per the Phase 4 spec.
+    expect(ui.render().join("\n")).toContain("[All Time]");
 
     const updateCalls = pi.events.emit.mock.calls.filter(
       (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,

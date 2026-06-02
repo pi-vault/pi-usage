@@ -43,6 +43,28 @@ export const PERIOD_ORDER: UsageWindow[] = [
 
 export const UI_STRINGS = {
   dashboardTitle: "Pi Usage Dashboard",
-  dashboardFooter:
-    "Tab period • ←→ provider • ↑↓ row • Enter expand • v insights • q/Esc close",
+  dashboardFooter: [
+    "[Tab/Shift-Tab] Provider",
+    "[Left/Right] Period",
+    "[Up/Down] Row",
+    "[Enter/Space] Expand/Collapse",
+    "[v] Insights",
+    "[q/Esc] Close",
+  ].join(" • "),
+  dashboardBorderedSectionTitles: {
+    usageStatistics: "Usage Statistics",
+    currentUsage: "Current Usage",
+    insights: "Insights",
+    notes: "Notes",
+  },
+  dashboardBorderChars: {
+    topLeft: "╭",
+    topRight: "╮",
+    bottomLeft: "╰",
+    bottomRight: "╯",
+    horizontal: "─",
+    separatorLeft: "├",
+    separatorRight: "┤",
+  },
+  dashboardDefaultPeriod: "allTime" as UsageWindow,
 } as const;

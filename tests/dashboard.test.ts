@@ -1,6 +1,100 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { TUI } from "@earendil-works/pi-tui";
 import { UsageDashboardComponent } from "../src/ui/dashboard.ts";
+import {
+  type DashboardTheme,
+  noTheme,
+} from "../src/ui/dashboard-theme.ts";
 import type { LiveUsageWindow, UsageCoreState } from "../src/types.ts";
+
+const ANSI_ESCAPE = "\u001b";
+const ANSI_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*m`, "g");
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_PATTERN, "");
+}
+
+function makeAnsiTheme(): DashboardTheme & {
+  calls: { method: string; color?: string; text: string }[];
+} {
+  const calls: { method: string; color?: string; text: string }[] = [];
+  const wrap = (open: string) => (text: string) => {
+    if (text.length === 0) return text;
+    return `${open}${text}${ANSI_ESCAPE}[0m`;
+  };
+  return {
+    calls,
+    fg: (color, text) => {
+      calls.push({ method: "fg", color, text });
+      return wrap(`${ANSI_ESCAPE}[38;5;75m`)(text);
+    },
+    bold: (text) => {
+      calls.push({ method: "bold", text });
+      return `${ANSI_ESCAPE}[1m${text}${ANSI_ESCAPE}[22m`;
+    },
+    dim: (text) => {
+      calls.push({ method: "dim", text });
+      return wrap(`${ANSI_ESCAPE}[38;5;243m`)(text);
+    },
+  };
+}
+
+interface MockTui {
+  requestRender: ReturnType<typeof vi.fn>;
+  events?: { on: ReturnType<typeof vi.fn> };
+}
+
+function makeMockTui(): MockTui {
+  return { requestRender: vi.fn() };
+}
+
+function mkPeriodData(): UsageCoreState["offline"]["periods"][number] {
+  return {
+    key: "today",
+    total: {
+      key: "total",
+      sessionCount: 1,
+      messageCount: 1,
+      input: 120000,
+      output: 305000,
+      cache: 5000,
+      cacheRead: 2000,
+      cacheWrite: 3000,
+      tokens: 428000,
+      cost: 1,
+    },
+    providers: [
+      {
+        key: "openai-codex",
+        sessionCount: 1,
+        messageCount: 1,
+        input: 120000,
+        output: 305000,
+        cache: 5000,
+        cacheRead: 2000,
+        cacheWrite: 3000,
+        tokens: 428000,
+        cost: 1,
+      },
+    ],
+    modelsByProvider: {
+      "openai-codex": [
+        {
+          key: "gpt-5",
+          sessionCount: 1,
+          messageCount: 1,
+          input: 10,
+          output: 20,
+          cache: 5,
+          cacheRead: 2,
+          cacheWrite: 3,
+          tokens: 33,
+          cost: 1,
+        },
+      ],
+    },
+  };
+}
 
 function mkState(): UsageCoreState {
   return {
@@ -12,53 +106,10 @@ function mkState(): UsageCoreState {
       totals: [],
       scannedFiles: 0,
       messageCount: 1,
-      periods: [
-        {
-          key: "today",
-          total: {
-            key: "total",
-            sessionCount: 1,
-            messageCount: 1,
-            input: 120000,
-            output: 305000,
-            cache: 5000,
-            cacheRead: 2000,
-            cacheWrite: 3000,
-            tokens: 428000,
-            cost: 1,
-          },
-          providers: [
-            {
-              key: "openai-codex",
-              sessionCount: 1,
-              messageCount: 1,
-              input: 120000,
-              output: 305000,
-              cache: 5000,
-              cacheRead: 2000,
-              cacheWrite: 3000,
-              tokens: 428000,
-              cost: 1,
-            },
-          ],
-          modelsByProvider: {
-            "openai-codex": [
-              {
-                key: "gpt-5",
-                sessionCount: 1,
-                messageCount: 1,
-                input: 10,
-                output: 20,
-                cache: 5,
-                cacheRead: 2,
-                cacheWrite: 3,
-                tokens: 33,
-                cost: 1,
-              },
-            ],
-          },
-        },
-      ],
+      // Populate every period so the All Time default still shows the table.
+      periods: (["today", "thisWeek", "lastWeek", "allTime"] as const).map(
+        (key) => ({ ...mkPeriodData(), key }),
+      ),
     },
     insights: [{ label: "x", cost: 1, detail: "y" }],
     currentProviderId: "command-code",
@@ -221,11 +272,14 @@ function expectedResetText(resetAt: number | undefined): string {
 
 describe("dashboard render", () => {
   it("renders usage statistics + current usage with selected provider details", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined);
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     expect(out).toContain("Usage Statistics");
-    expect(out).toContain("[Today]");
+    // Default period is All Time per the spec.
+    expect(out).toContain("[All Time]");
     expect(out).toContain("Provider / Model");
     expect(out).toContain("openai-codex");
     expect(out).toContain("428k");
@@ -252,8 +306,10 @@ describe("dashboard render", () => {
     expect(out).not.toContain("Command Code web usage API");
   });
 
-  it("wraps joined legend and supports arrow-based provider navigation", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined);
+  it("wraps joined legend and supports tab-based provider navigation", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
     const narrow = c.render(80).join("\n");
     expect(narrow).toContain(
       "Tokens = Input + Output + CacheW • ↑In = Input + CacheW",
@@ -265,12 +321,13 @@ describe("dashboard render", () => {
     expect(wrappedTabs).toContain("MiniMax    OpenCode Go");
     expect(wrappedTabs).toContain("[Command Code]");
 
-    c.handleInput("\u001b[D");
+    // Provider navigation uses Tab/Shift-Tab per the new mapping.
+    c.handleInput("\u001b[Z"); // Shift-Tab
     let out = c.render(120).join("\n");
     expect(out).toContain("[OpenCode Go]");
     expect(out).toContain("Credits: $12.50");
 
-    c.handleInput("\u001b[C");
+    c.handleInput("\t"); // Tab
     out = c.render(120).join("\n");
     expect(out).toContain("[Command Code]");
   });
@@ -292,7 +349,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const lines = c.render(200);
 
     const line5h = lines.find((l) => l.startsWith("5h") && l.includes("["));
@@ -323,7 +382,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     // 100 - 43.7 = 56.3, rounded to 56
@@ -351,7 +412,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     expect(out).toContain("(resets 14:30)");
@@ -369,7 +432,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     expect(out).toContain(expectedResetText(Date.parse("2026-06-07T11:47:00")));
@@ -385,7 +450,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     expect(out).toContain("(reset unavailable)");
@@ -414,7 +481,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const lines = c.render(200);
 
     const line5h = lines.find((l) => l.startsWith("5h") && l.includes("["));
@@ -453,7 +522,9 @@ describe("dashboard render", () => {
       },
     ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined);
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
     const out = c.render(140).join("\n");
 
     expect(out).toContain("50% left");
@@ -462,17 +533,366 @@ describe("dashboard render", () => {
     expect(out).not.toContain(" requests");
   });
 
-  it("uses tab for period changes and keeps insights toggle and expand behavior", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined);
+  it("uses enter/space for expand, v for insights, and left/right for period changes", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
     c.handleInput("v");
     expect(c.render(100).join("\n")).toContain("Insights");
     c.handleInput("v");
+
+    // Enter expands the selected provider row to reveal its model rows.
     c.handleInput("\r");
-    expect(c.render(120).join("\n")).toContain("  gpt-5");
-    c.handleInput("\t");
-    expect(c.render(120).join("\n")).toContain("[This Week]");
-    expect(c.render(120).join("\n")).toContain("No local session usage found.");
-    expect(c.render(120).join("\n")).toContain("Tab period");
-    expect(c.render(120).join("\n")).toContain("←→ provider");
+    expect(c.render(120).join("\n")).toContain("gpt-5");
+
+    // Left/Right change the period. Default is All Time (index 3); one Left
+    // press moves to Last Week.
+    c.handleInput("\u001b[D");
+    expect(c.render(120).join("\n")).toContain("[Last Week]");
+
+    // Two more Right presses move through This Week back to Today.
+    c.handleInput("\u001b[C");
+    c.handleInput("\u001b[C");
+    expect(c.render(120).join("\n")).toContain("[Today]");
+
+    // Period changes reset the selected row back to 0.
+    expect(c.render(120).join("\n")).toContain("openai-codex");
+  });
+
+  it("closes the dashboard on q and Esc, calling cancelScan", () => {
+    const done = vi.fn();
+    const cancelScan = vi.fn();
+    const c = new UsageDashboardComponent(mkState(), done, {
+      theme: noTheme,
+      cancelScan,
+    });
+
+    c.handleInput("q");
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(cancelScan).toHaveBeenCalledTimes(1);
+
+    done.mockClear();
+    cancelScan.mockClear();
+
+    c.handleInput("\u001b");
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(cancelScan).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dashboard themed styling", () => {
+  it("wraps section titles, borders, and dimmed helpers with ANSI escape codes", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    const lines = c.render(140);
+    const out = lines.join("\n");
+
+    // Top and bottom borders should be present with box-drawing characters.
+    expect(out).toContain("╭");
+    expect(out).toContain("╯");
+
+    // Section titles should be themed bold + accent. The component composes
+    // these as `fg("accent", bold(text))`, so the inner `bold` call receives
+    // the plain title string and the outer `fg` call receives the bold
+    // wrapped output.
+    expect(
+      theme.calls.some(
+        (c) => c.method === "bold" && c.text === "Usage Statistics",
+      ),
+    ).toBe(true);
+    expect(
+      theme.calls.some(
+        (c) =>
+          c.method === "fg" &&
+          c.color === "accent" &&
+          c.text.includes("Usage Statistics"),
+      ),
+    ).toBe(true);
+
+    // The current usage header should be followed by a separator line styled
+    // with the muted-border color.
+    const usageIndex = lines.findIndex((line) => line.includes("Current Usage"));
+    expect(usageIndex).toBeGreaterThan(-1);
+    const separator = lines[usageIndex + 1] ?? "";
+    expect(separator).toContain("├");
+    expect(separator).toContain("┤");
+
+    // The footer should be dimmed.
+    expect(out).toContain("[Tab/Shift-Tab] Provider");
+    expect(
+      theme.calls.some(
+        (c) => c.method === "dim" && c.text.includes("[Tab/Shift-Tab] Provider"),
+      ),
+    ).toBe(true);
+  });
+
+  it("highlights the selected disclosure arrow + provider label and dims the rest", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    const lines = c.render(140);
+
+    const providerLine = lines.find(
+      (l) => l.includes("openai-codex") && l.includes("▸"),
+    );
+    expect(providerLine).toBeDefined();
+
+    const plain = stripAnsi(providerLine ?? "");
+    // No leading `>` cursor anywhere on the line.
+    expect(plain.startsWith(">")).toBe(false);
+    // The selected disclosure arrow + label is rendered, the row carries the
+    // arrow and provider key.
+    expect(plain).toContain("▸");
+    expect(plain).toContain("openai-codex");
+    expect(
+      theme.calls.some(
+        (c) =>
+          c.method === "fg" &&
+          c.color === "accent" &&
+          c.text.includes("openai-codex"),
+      ),
+    ).toBe(true);
+  });
+
+  it("dims the inactive provider tabs in Current Usage", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    c.render(140);
+
+    const dimmedLabels = theme.calls
+      .filter((c) => c.method === "dim")
+      .map((c) => c.text);
+    // Inactive tab labels should appear in the dim list.
+    expect(dimmedLabels).toContain("OpenAI/Codex");
+    expect(dimmedLabels).toContain("OpenRouter");
+    expect(dimmedLabels).toContain("MiniMax");
+    expect(dimmedLabels).toContain("OpenCode Go");
+    // The active tab is bold + accent, NOT dim.
+    expect(dimmedLabels).not.toContain("Command Code");
+  });
+
+  it("splits CacheR and CacheW columns in wide layouts", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
+    const out = c.render(140).join("\n");
+
+    expect(out).toContain("CacheR");
+    expect(out).toContain("CacheW");
+    // The wide layout includes the abbreviated ↑In/↓Out columns.
+    expect(out).toContain("↑In");
+    expect(out).toContain("↓Out");
+  });
+
+  it("keeps compact breakpoints without the wide cache columns", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
+    // 80 columns: between the 72 and 94 breakpoints, the table collapses to
+    // Sessions/Cost/Tokens. The compact layout should not surface the wide
+    // cache or arrowed column labels in the table column header. The legend
+    // references `CacheR`/`CacheW` for explanatory purposes; we constrain
+    // the assertion to the header row specifically.
+    const lines = c.render(80);
+    const headerLine = lines.find((line) => line.includes("Provider / Model"));
+    expect(headerLine).toBeDefined();
+    expect(headerLine).not.toMatch(/\bCacheR\b/);
+    expect(headerLine).not.toMatch(/\bCacheW\b/);
+    expect(headerLine).not.toContain("↑In");
+    expect(headerLine).not.toContain("↓Out");
+  });
+
+  it("aligns themed quota bars by visible width", () => {
+    const theme = makeAnsiTheme();
+    const state = mkState();
+    setWindows(state, [
+      {
+        key: "5h",
+        label: "5h",
+        usedPercent: 50,
+        resetAt: Date.now() + 3600000,
+      },
+      {
+        key: "weekly",
+        label: "Weekly",
+        usedPercent: 10,
+        resetAt: Date.now() + 86400000 * 7,
+      },
+    ]);
+
+    const c = new UsageDashboardComponent(state, () => undefined, { theme });
+    const lines = c.render(200);
+    const line5h = lines.find((l) => stripAnsi(l).startsWith("5h") && l.includes("["));
+    const lineWeekly = lines.find(
+      (l) => stripAnsi(l).startsWith("Weekly") && l.includes("["),
+    );
+
+    expect(line5h).toBeDefined();
+    expect(lineWeekly).toBeDefined();
+
+    // The opening bracket (after padding) is what we align on, not the
+    // visual label start. Find the first `[` in each line and ensure the
+    // visible-width columns match.
+    const bracketIndex = (line: string) => stripAnsi(line).indexOf("[");
+    expect(bracketIndex(line5h ?? "")).toBe(bracketIndex(lineWeekly ?? ""));
+  });
+
+  it("highlights the quota remaining-bar fill and percentage", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    c.render(140);
+
+    // The fill glyphs should be wrapped in accent styling.
+    const filledAccent = theme.calls.find(
+      (c) => c.method === "fg" && c.color === "accent" && c.text.includes("█"),
+    );
+    expect(filledAccent).toBeDefined();
+
+    // The percentage text should be accent-wrapped.
+    const percentAccent = theme.calls.find(
+      (c) => c.method === "fg" && c.color === "accent" && c.text === "57% left",
+    );
+    expect(percentAccent).toBeDefined();
+  });
+
+  it("dims the formula legend, reset text, and ratio text", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    c.render(140);
+
+    const dimmed = theme.calls.filter((c) => c.method === "dim").map((c) => c.text);
+    // Legend segments are wrapped via `dim` for each segment.
+    expect(dimmed).toContain("Tokens = Input + Output + CacheW");
+    expect(dimmed).toContain("CacheR = Cache Read");
+    // Reset text gets dimmed.
+    expect(
+      dimmed.some((text) => text.startsWith("(resets ") || text.includes("reset unavailable")),
+    ).toBe(true);
+    // Ratio is dimmed.
+    expect(dimmed).toContain("$4.29/$10.00");
+  });
+
+  it("renders the footer in [Shortcut] Action format with dimmed styling", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    const out = c.render(160).join("\n");
+    const stripped = stripAnsi(out);
+
+    // Each shortcut is wrapped in [].
+    expect(stripped).toContain("[Tab/Shift-Tab] Provider");
+    expect(stripped).toContain("[Left/Right] Period");
+    expect(stripped).toContain("[Up/Down] Row");
+    expect(stripped).toContain("[Enter/Space] Expand/Collapse");
+    expect(stripped).toContain("[v] Insights");
+    expect(stripped).toContain("[q/Esc] Close");
+
+    // The full footer is a single string passed to `dim` (one call), not six.
+    const footerDimCall = theme.calls.find(
+      (c) =>
+        c.method === "dim" &&
+        c.text.includes("[Tab/Shift-Tab] Provider") &&
+        c.text.includes("[q/Esc] Close"),
+    );
+    expect(footerDimCall).toBeDefined();
+  });
+
+  it("strips ANSI before applying final truncation so visible width is preserved", () => {
+    const theme = makeAnsiTheme();
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme,
+    });
+    // Render with a narrow width - every visible line must not exceed it
+    // even when ANSI escapes are present.
+    const lines = c.render(40);
+    for (const line of lines) {
+      const visible = stripAnsi(line).length;
+      expect(visible).toBeLessThanOrEqual(40);
+    }
+  });
+});
+
+describe("dashboard repaint subscription", () => {
+  it("calls tui.requestRender when a usage-core:update-current event fires", () => {
+    const tui = makeMockTui();
+    const unsubscribe = vi.fn();
+    const bus = {
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        expect(event).toBe("usage-core:update-current");
+        bus.handler = handler;
+        return unsubscribe;
+      }),
+      handler: undefined as ((...args: unknown[]) => void) | undefined,
+    };
+    (globalThis as { __piUsageBus?: unknown }).__piUsageBus = bus;
+
+    try {
+      new UsageDashboardComponent(mkState(), () => undefined, {
+        theme: noTheme,
+        tui: tui as unknown as TUI,
+      });
+
+      bus.handler?.();
+      expect(tui.requestRender).toHaveBeenCalledTimes(1);
+
+      bus.handler?.();
+      expect(tui.requestRender).toHaveBeenCalledTimes(2);
+
+      // The dashboard's invalidate() must release the listener.
+      const c = new UsageDashboardComponent(mkState(), () => undefined, {
+        theme: noTheme,
+        tui: tui as unknown as TUI,
+      });
+      c.invalidate();
+      expect(unsubscribe).toHaveBeenCalled();
+    } finally {
+      delete (globalThis as { __piUsageBus?: unknown }).__piUsageBus;
+    }
+  });
+
+  it("does nothing if no TUI is provided", () => {
+    expect(() => {
+      new UsageDashboardComponent(mkState(), () => undefined, {
+        theme: noTheme,
+      });
+    }).not.toThrow();
+  });
+});
+
+describe("dashboard responsive layout", () => {
+  it("renders at very narrow widths without breaking the table", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
+    const lines = c.render(30);
+    for (const line of lines) {
+      const visible = line.replace(ANSI_PATTERN, "").length;
+      expect(visible).toBeLessThanOrEqual(30);
+    }
+    expect(lines.join("\n")).toContain("Usage Statistics");
+    expect(lines.join("\n")).toContain("Current Usage");
+  });
+
+  it("falls back to a minimal two-column table at the smallest breakpoint", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
+    const lines = c.render(50);
+    const out = lines.join("\n");
+    // The narrowest layout should drop Sessions/Msgs in favor of Cost/Tokens.
+    expect(out).not.toContain("Sessions");
+    expect(out).not.toContain("Msgs");
+    expect(out).toContain("Cost");
+    expect(out).toContain("Tokens");
   });
 });
