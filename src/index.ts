@@ -274,6 +274,10 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
       state.generatedAt = deps.now();
       state.loading = false;
+      // Notify subscribers (including the open dashboard) that the offline
+      // snapshot is now current. The existing event path is the single source
+      // of truth for usage-core updates.
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     };
 
     const bootstrap = async () => {
@@ -328,6 +332,16 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         payload.reply({ state: cloneState(state) });
       },
     );
+
+    // Expose the event bus on a well-known global hook so the dashboard
+    // component can wire a repaint subscription when the overlay is open.
+    // The hook is replaced atomically; the dashboard's `unsubscribeUpdate`
+    // remains valid even if the bus is replaced while the overlay is open.
+    const dashboardBus = {
+      on: (event: string, handler: (...args: unknown[]) => void) =>
+        pi.events.on(event, handler as (...args: unknown[]) => void),
+    };
+    (globalThis as { __piUsageBus?: unknown }).__piUsageBus = dashboardBus;
 
     pi.on("session_start", (_event, ctx) => {
       updateModelContext(ctx.model);
@@ -418,6 +432,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       cacheWatcher = undefined;
       unsubscribeRequestCurrent();
       delete globalThis[GLOBAL_KEY];
+      delete (globalThis as { __piUsageBus?: unknown }).__piUsageBus;
     });
   };
 }
