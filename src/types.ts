@@ -1,6 +1,7 @@
 export type ProviderId =
   | "offline"
   | "openai-codex"
+  | "openrouter"
   | "minimax"
   | "opencode-go"
   | "command-code";

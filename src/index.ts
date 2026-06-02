@@ -57,10 +57,17 @@ function createInitialState(): UsageCoreState {
 
 export function detectProviderFromModel(
   model: { provider?: string; id?: string; name?: string } | undefined,
-): "openai-codex" | "minimax" | "opencode-go" | "command-code" | undefined {
+):
+  | "openai-codex"
+  | "openrouter"
+  | "minimax"
+  | "opencode-go"
+  | "command-code"
+  | undefined {
   if (!model) return undefined;
   const p = (model.provider ?? "").trim().toLowerCase();
   if (p === "openai-codex") return "openai-codex";
+  if (p === "openrouter") return "openrouter";
   if (p === "minimax") return "minimax";
   if (p === "opencode-go") return "opencode-go";
   if (p === "command-code" || p === "commandcode") return "command-code";
@@ -361,9 +368,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       const scanToken: ScanToken = { cancelled: false };
       const shouldScan =
         refresh || (state.offline.periods.length === 0 && !state.loading);
-      const scan = shouldScan
-        ? refreshOffline(refresh, scanToken)
-        : undefined;
+      const scan = shouldScan ? refreshOffline(refresh, scanToken) : undefined;
       return {
         cancelScan: () => {
           scanToken.cancelled = true;

@@ -96,7 +96,10 @@ async function acquireLock(
       if (retryImmediately) continue;
       if (waitedMs === LOCK_TIMINGS_MS.wait) return undefined;
       await delay(deps, LOCK_TIMINGS_MS.poll);
-      waitedMs = Math.min(LOCK_TIMINGS_MS.wait, waitedMs + LOCK_TIMINGS_MS.poll);
+      waitedMs = Math.min(
+        LOCK_TIMINGS_MS.wait,
+        waitedMs + LOCK_TIMINGS_MS.poll,
+      );
     }
   }
   return undefined;
@@ -152,7 +155,7 @@ export function parseDurationMs(value: unknown): number | undefined {
 type LiveRuntimeConfig = {
   id: Extract<
     ProviderId,
-    "openai-codex" | "minimax" | "opencode-go" | "command-code"
+    "openai-codex" | "openrouter" | "minimax" | "opencode-go" | "command-code"
   >;
   fetchLive: (input: {
     cached: ProviderUsageSnapshot | undefined;
@@ -179,7 +182,10 @@ export async function fetchWithLiveRuntime(
   const failuresPath = join(dir, `${config.id}.failures.json`);
 
   let cached = await readJsonSafe<ProviderUsageSnapshot>(deps, cachePath);
-  const backoff = await readJsonSafe<{ nextRetryAt: number }>(deps, backoffPath);
+  const backoff = await readJsonSafe<{ nextRetryAt: number }>(
+    deps,
+    backoffPath,
+  );
   if (backoff?.nextRetryAt && backoff.nextRetryAt > now) {
     return {
       snapshot: cached
@@ -223,7 +229,10 @@ export async function fetchWithLiveRuntime(
     const latest = await readJsonSafe<ProviderUsageSnapshot>(deps, cachePath);
     if (latest) cached = latest;
     if (!input?.force && cached?.expiresAt && cached.expiresAt > deps.now()) {
-      return { snapshot: asCachedSnapshot(cached, deps.now()), shouldWriteCache: false };
+      return {
+        snapshot: asCachedSnapshot(cached, deps.now()),
+        shouldWriteCache: false,
+      };
     }
 
     let result: Awaited<ReturnType<typeof config.fetchLive>>;
@@ -242,7 +251,9 @@ export async function fetchWithLiveRuntime(
     }
 
     if (result.kind === "rate-limited") {
-      await writeJsonAtomic(deps, backoffPath, { nextRetryAt: result.nextRetryAt });
+      await writeJsonAtomic(deps, backoffPath, {
+        nextRetryAt: result.nextRetryAt,
+      });
       return {
         snapshot: cached
           ? asCachedSnapshot(cached, now, result.message)
