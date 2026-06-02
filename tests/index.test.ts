@@ -383,7 +383,7 @@ describe("usage extension", () => {
     const rendered = ui.render().join("\n");
     expect(rendered).toContain("Current Usage");
     expect(rendered).toContain(
-      "[OpenAI/Codex]    MiniMax    OpenCode Go    Command Code",
+      "[OpenAI/Codex]    OpenRouter    MiniMax    OpenCode Go    Command Code",
     );
     expect(rendered).toContain("OpenAI/Codex • unavailable • 0s old");
     expect(rendered).toContain("No live usage details.");
@@ -405,6 +405,7 @@ describe("usage extension", () => {
     expect(providers.map((provider) => provider.label)).toEqual([
       "Offline",
       "OpenAI/Codex",
+      "OpenRouter",
       "MiniMax",
       "OpenCode Go",
       "Command Code",
