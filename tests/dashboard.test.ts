@@ -154,33 +154,6 @@ function mkState(): UsageCoreState {
         diagnostics: ["Live cache is unavailable."],
       },
       {
-        providerId: "openrouter",
-        providerLabel: "OpenRouter",
-        available: true,
-        diagnostic: "",
-        fetchedAt: 0,
-        balances: [
-          { label: "Remaining", remaining: 45.5, unit: "USD" },
-          { label: "Total credits", remaining: 100, unit: "USD" },
-          { label: "Total usage", remaining: 54.5, unit: "USD" },
-        ],
-        status: "live",
-        sourceLabel: "OpenRouter credits API",
-        sourceKind: "live",
-        staleAgeMs: 0,
-        windows: [
-          {
-            key: "key-quota",
-            label: "Key quota",
-            usedPercent: 55,
-            used: 54.5,
-            limit: 100,
-            unit: "USD",
-          },
-        ],
-        diagnostics: [],
-      },
-      {
         providerId: "minimax",
         providerLabel: "MiniMax",
         available: true,
@@ -189,6 +162,20 @@ function mkState(): UsageCoreState {
         balances: [],
         status: "live",
         sourceLabel: "MiniMax token plan API",
+        sourceKind: "live",
+        staleAgeMs: 0,
+        windows: [],
+        diagnostics: [],
+      },
+      {
+        providerId: "stepfun",
+        providerLabel: "StepFun",
+        available: true,
+        diagnostic: "",
+        fetchedAt: 0,
+        balances: [],
+        status: "live",
+        sourceLabel: "StepFun rate limit API",
         sourceKind: "live",
         staleAgeMs: 0,
         windows: [],
@@ -232,6 +219,33 @@ function mkState(): UsageCoreState {
         ],
         diagnostics: ["Subscription endpoint unavailable."],
         planName: "Go",
+      },
+      {
+        providerId: "openrouter",
+        providerLabel: "OpenRouter",
+        available: true,
+        diagnostic: "",
+        fetchedAt: 0,
+        balances: [
+          { label: "Remaining", remaining: 45.5, unit: "USD" },
+          { label: "Total credits", remaining: 100, unit: "USD" },
+          { label: "Total usage", remaining: 54.5, unit: "USD" },
+        ],
+        status: "live",
+        sourceLabel: "OpenRouter credits API",
+        sourceKind: "live",
+        staleAgeMs: 0,
+        windows: [
+          {
+            key: "key-quota",
+            label: "Key quota",
+            usedPercent: 55,
+            used: 54.5,
+            limit: 100,
+            unit: "USD",
+          },
+        ],
+        diagnostics: [],
       },
     ],
     diagnostics: [],
@@ -290,7 +304,7 @@ describe("dashboard render", () => {
 
     expect(out).toContain("Current Usage");
     expect(out).toContain(
-      "OpenAI/Codex    OpenRouter    MiniMax    OpenCode Go    [Command Code]",
+      "OpenAI/Codex    MiniMax    StepFun    OpenCode Go    [Command Code]    OpenRouter",
     );
     expect(out).toContain("Command Code (Go) • live • 4s old");
     expect(out).toContain("57% left");
@@ -317,9 +331,9 @@ describe("dashboard render", () => {
     expect(narrow).toContain("CacheR = Cache Read • CacheW = Cache Write");
 
     const wrappedTabs = c.render(36).join("\n");
-    expect(wrappedTabs).toContain("OpenAI/Codex    OpenRouter");
-    expect(wrappedTabs).toContain("MiniMax    OpenCode Go");
-    expect(wrappedTabs).toContain("[Command Code]");
+    expect(wrappedTabs).toContain("OpenAI/Codex    MiniMax    StepFun");
+    expect(wrappedTabs).toContain("OpenCode Go    [Command Code]");
+    expect(wrappedTabs).toContain("OpenRouter");
 
     // Provider navigation uses Tab/Shift-Tab per the new mapping.
     c.handleInput("\u001b[Z"); // Shift-Tab
@@ -669,9 +683,10 @@ describe("dashboard themed styling", () => {
       .map((c) => c.text);
     // Inactive tab labels should appear in the dim list.
     expect(dimmedLabels).toContain("OpenAI/Codex");
-    expect(dimmedLabels).toContain("OpenRouter");
     expect(dimmedLabels).toContain("MiniMax");
+    expect(dimmedLabels).toContain("StepFun");
     expect(dimmedLabels).toContain("OpenCode Go");
+    expect(dimmedLabels).toContain("OpenRouter");
     // The active tab is bold + accent, NOT dim.
     expect(dimmedLabels).not.toContain("Command Code");
   });
