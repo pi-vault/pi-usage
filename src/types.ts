@@ -1,10 +1,11 @@
 export type ProviderId =
   | "offline"
   | "openai-codex"
-  | "openrouter"
   | "minimax"
+  | "stepfun"
   | "opencode-go"
-  | "command-code";
+  | "command-code"
+  | "openrouter";
 
 export type UsageWindow = "today" | "thisWeek" | "lastWeek" | "allTime";
 

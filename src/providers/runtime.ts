@@ -155,7 +155,12 @@ export function parseDurationMs(value: unknown): number | undefined {
 type LiveRuntimeConfig = {
   id: Extract<
     ProviderId,
-    "openai-codex" | "openrouter" | "minimax" | "opencode-go" | "command-code"
+    | "openai-codex"
+    | "minimax"
+    | "stepfun"
+    | "opencode-go"
+    | "command-code"
+    | "openrouter"
   >;
   fetchLive: (input: {
     cached: ProviderUsageSnapshot | undefined;

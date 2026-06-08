@@ -7,6 +7,7 @@ import { createOfflineProvider } from "./offline.ts";
 import { createOpenAICodexProvider } from "./openai-codex.ts";
 import { createOpenCodeGoProvider } from "./opencode-go.ts";
 import { createOpenRouterProvider } from "./openrouter.ts";
+import { createStepFunProvider } from "./stepfun.ts";
 
 export { providerCacheDir } from "./runtime.ts";
 
@@ -16,10 +17,11 @@ export function createProviderRegistry(
   const providers: Record<UsageProviderAdapter["id"], UsageProviderAdapter> = {
     offline: createOfflineProvider(deps),
     "openai-codex": createOpenAICodexProvider(deps),
-    openrouter: createOpenRouterProvider(deps),
     minimax: createMiniMaxProvider(deps),
+    stepfun: createStepFunProvider(deps),
     "opencode-go": createOpenCodeGoProvider(deps),
     "command-code": createCommandCodeProvider(deps),
+    openrouter: createOpenRouterProvider(deps),
   };
   return PROVIDER_ORDER.map((id) => providers[id]);
 }
