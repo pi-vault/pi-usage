@@ -35,7 +35,7 @@ The dashboard opens in a TUI overlay over the current Pi session and is split in
 The top section is an aggregated table of all token and cost usage across your local Pi sessions.
 
 - **Period switching** — `Today` / `This Week` / `Last Week` / `All Time` is selectable with the arrow keys.
-- **Provider rows** — one row per provider in `PROVIDER_ORDER` (Offline, OpenAI/Codex, OpenRouter, MiniMax, OpenCode Go, Command Code). Rows are expandable to show per-model rows.
+- **Provider rows** — one row per provider found in your local Pi history, sorted by cost. Rows are expandable to show per-model rows.
 - **Per-row columns** — sessions, messages, cost, total tokens, input, output, cache reads, and cache writes.
 - **Total row** — a summary line at the bottom that aggregates every visible column for the active period.
 
@@ -43,10 +43,11 @@ The top section is an aggregated table of all token and cost usage across your l
 
 A live view focused on rolling-window quota bars and balances for whichever providers are already configured in Pi.
 
-- **Provider tabs** — switch between configured providers (`OpenAI/Codex`, `OpenRouter`, `MiniMax`, `OpenCode Go`, `Command Code`) with `Tab` / `Shift-Tab`.
+- **Provider tabs** — switch between configured providers (`OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, `OpenRouter`) with `Tab` / `Shift-Tab`.
 - **Quota bars** — `5h` and weekly windows with the percentage remaining and a compact reset description.
 - **Balances** — credits/remaining balance rows for providers that report a balance (for example, OpenRouter credits and the local Command Code fallback).
 - **Live status** — each card reports whether the data is live, cached, stale, or a local-only fallback, with the cache age when relevant.
+- **Live refresh cadence** — live provider snapshots are cached for 30 minutes and background refresh checks run every 30 minutes. `/usage:refresh` still forces an immediate refresh.
 
 ### Notes
 
@@ -64,6 +65,13 @@ Per-provider diagnostics and caveats (e.g. live status, cache age, source) are s
 ## Setup
 
 Offline totals always work from local Pi history. Live provider cards are shown only for providers you have already configured in Pi.
+
+### StepFun setup
+
+Set one of:
+
+- `STEPFUN_TOKEN`
+- `STEPFUN_USERNAME` and `STEPFUN_PASSWORD`
 
 ## Event API
 

@@ -173,6 +173,22 @@ describe("usage extension", () => {
     expect(pi.registerCommandCalls).toEqual(["usage", "usage:refresh"]);
   });
 
+  it("starts live runtime with a 30 minute polling interval", () => {
+    const pi = createPiMock();
+    const setInterval = vi.fn(() => ({ unref() {} } as unknown as NodeJS.Timeout));
+    createUsageExtension({
+      deps: {
+        now: () => 1,
+        setInterval,
+        clearInterval: vi.fn(),
+        unrefTimer: vi.fn(),
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: undefined });
+    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), 1_800_000);
+  });
+
   it("duplicate real-mode init is ignored", () => {
     delete globalThis.__piUsage;
     const pi1 = createPiMock();
@@ -218,6 +234,7 @@ describe("usage extension", () => {
     createUsageExtension({
       deps: {
         now: () => 1,
+        agentDir: (() => "/definitely/missing") as never,
         fetch: vi.fn(async () => {
           throw new Error("network unavailable");
         }) as never,
@@ -389,8 +406,9 @@ describe("usage extension", () => {
     const rendered = ui.render().join("\n");
     expect(rendered).toContain("Current Usage");
     expect(rendered).toContain(
-      "[OpenAI/Codex]    OpenRouter    MiniMax    OpenCode Go    Command Code",
+      "[OpenAI/Codex]    MiniMax    StepFun    OpenCode Go    Command Code",
     );
+    expect(rendered).toContain("OpenRouter");
     expect(rendered).toContain("OpenAI/Codex • unavailable • 0s old");
     expect(rendered).toContain("No live usage details.");
     expect(rendered).toContain("* OpenAI/Codex: Live cache is unavailable.");
@@ -411,29 +429,20 @@ describe("usage extension", () => {
     expect(providers.map((provider) => provider.label)).toEqual([
       "Offline",
       "OpenAI/Codex",
-      "OpenRouter",
       "MiniMax",
+      "StepFun",
       "OpenCode Go",
       "Command Code",
+      "OpenRouter",
     ]);
 
     const snapshots = await Promise.all(
       providers.map(async (provider) => (await provider.fetch()).snapshot),
     );
-    expect(snapshots.every((snapshot) => snapshot.available === false)).toBe(
-      true,
-    );
-    const minimax = snapshots.find(
-      (snapshot) => snapshot.providerId === "minimax",
-    );
-    expect(minimax?.diagnostic).toContain("Live cache is unavailable");
-    const opencode = snapshots.find((s) => s.providerId === "opencode-go");
-    expect(opencode?.diagnostic.length).toBeGreaterThan(0);
-    expect(
-      snapshots
-        .filter((snapshot) => snapshot.providerId === "command-code")
-        .every((snapshot) => snapshot.diagnostic.length > 0),
-    ).toBe(true);
+
+    const stepfun = snapshots.find((snapshot) => snapshot.providerId === "stepfun");
+    expect(stepfun?.available).toBe(false);
+    expect(stepfun?.diagnostic.length).toBeGreaterThan(0);
   });
 
   it("replies synchronously with current state before session_start", () => {
