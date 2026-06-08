@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/%40pi-vault%2Fpi-usage)](https://www.npmjs.com/package/@pi-vault/pi-usage)
 [![Quality](https://github.com/pi-vault/pi-usage/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/pi-vault/pi-usage/actions/workflows/quality.yml)
-[![Node >= 22.12](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node >= 22.19](https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
 Show aggregated Pi usage stats across your sessions — token and cost breakdowns by provider and model, plus live quota snapshots for configured providers, all from a single in-app dashboard.
@@ -66,12 +66,63 @@ Per-provider diagnostics and caveats (e.g. live status, cache age, source) are s
 
 Offline totals always work from local Pi history. Live provider cards are shown only for providers you have already configured in Pi.
 
-### StepFun setup
+### Live provider setup
+
+#### OpenAI/Codex
+
+Pi usage can reuse existing Pi or Codex auth automatically. Optional overrides:
+
+- `OPENAI_CODEX_OAUTH_TOKEN`
+- `OPENAI_CODEX_ACCESS_TOKEN`
+- `CODEX_OAUTH_TOKEN`
+- `CODEX_ACCESS_TOKEN`
+- `OPENAI_CODEX_ACCOUNT_ID`
+- `CHATGPT_ACCOUNT_ID`
+
+#### MiniMax
+
+Set one of:
+
+- `MINIMAX_CODING_API_KEY`
+- `MINIMAX_API_KEY`
+
+Optional override:
+
+- `MINIMAX_API_HOST`
+
+#### StepFun
 
 Set one of:
 
 - `STEPFUN_TOKEN`
 - `STEPFUN_USERNAME` and `STEPFUN_PASSWORD`
+
+#### OpenCode Go
+
+Set:
+
+- `OPENCODE_GO_COOKIE_HEADER`
+- `OPENCODE_GO_WORKSPACE_ID`
+
+`OPENCODE_GO_WORKSPACE_ID` may be either the raw `wrk_...` id or the full workspace URL.
+
+#### Command Code
+
+Set:
+
+- `COMMAND_CODE_COOKIE_HEADER`
+
+#### OpenRouter
+
+Set:
+
+- `OPENROUTER_API_KEY`
+
+Optional overrides:
+
+- `OPENROUTER_API_URL`
+- `OPENROUTER_X_TITLE`
+- `OPENROUTER_HTTP_REFERER`
 
 ## Event API
 
