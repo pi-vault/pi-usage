@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPeriods } from "../src/ui/dashboard-model.ts";
+import { buildPeriods } from "../src/tui/dashboard-model.ts";
 
 describe("dashboard-model", () => {
   it("maps cache fields and preserves token/input semantics", () => {

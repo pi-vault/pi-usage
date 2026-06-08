@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { UsageDeps } from "./deps.ts";
+import type { UsageDeps } from "../shared/deps.ts";
 
 export type PeriodKey = "today" | "thisWeek" | "lastWeek" | "allTime";
 

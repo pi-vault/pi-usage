@@ -1,6 +1,6 @@
-import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../constants.ts";
-import type { UsageDeps } from "../deps.ts";
-import type { LiveUsageWindow, UsageProviderAdapter } from "../types.ts";
+import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../shared/constants.ts";
+import type { UsageDeps } from "../shared/deps.ts";
+import type { LiveUsageWindow, UsageProviderAdapter } from "../shared/types.ts";
 import {
   fetchWithLiveRuntime,
   parseEpochMs,

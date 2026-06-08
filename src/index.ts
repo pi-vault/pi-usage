@@ -1,17 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createDefaultDeps, type UsageDeps } from "./deps.ts";
+import { buildInsights, scanOfflineUsage } from "./core/offline.ts";
+import { createProviderRegistry, providerCacheDir } from "./providers/index.ts";
+import { createDefaultDeps, type UsageDeps } from "./shared/deps.ts";
 import {
   USAGE_CORE_READY_EVENT,
   USAGE_CORE_REQUEST_EVENT,
   USAGE_CORE_UPDATE_CURRENT_EVENT,
   type UsageCoreCurrentRequest,
   type UsageCorePayload,
-} from "./events.ts";
-import { buildInsights, scanOfflineUsage } from "./offline.ts";
-import { createProviderRegistry, providerCacheDir } from "./providers.ts";
-import type { UsageCoreState } from "./types.ts";
-import { buildPeriods } from "./ui/dashboard-model.ts";
-import { openDashboard } from "./ui/dashboard.ts";
+} from "./shared/events.ts";
+import type { UsageCoreState } from "./shared/types.ts";
+import { buildPeriods } from "./tui/dashboard-model.ts";
+import { openDashboard } from "./tui/dashboard.ts";
 
 const GLOBAL_KEY = "__piUsage" as const;
 
@@ -278,9 +278,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
       state.generatedAt = deps.now();
       state.loading = false;
-      // Notify subscribers (including the open dashboard) that the offline
-      // snapshot is now current. The existing event path is the single source
-      // of truth for usage-core updates.
       emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
     };
 
@@ -337,10 +334,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       },
     );
 
-    // Expose the event bus on a well-known global hook so the dashboard
-    // component can wire a repaint subscription when the overlay is open.
-    // The hook is replaced atomically; the dashboard's `unsubscribeUpdate`
-    // remains valid even if the bus is replaced while the overlay is open.
     const dashboardBus = {
       on: (event: string, handler: (...args: unknown[]) => void) =>
         pi.events.on(event, handler as (...args: unknown[]) => void),
