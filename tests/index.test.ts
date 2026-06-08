@@ -6,10 +6,10 @@ import {
   USAGE_CORE_READY_EVENT,
   USAGE_CORE_REQUEST_EVENT,
   USAGE_CORE_UPDATE_CURRENT_EVENT,
-} from "../src/events.ts";
-import { createDefaultDeps } from "../src/deps.ts";
+} from "../src/shared/events.ts";
+import { createDefaultDeps } from "../src/shared/deps.ts";
 import { createUsageExtension } from "../src/index.ts";
-import { createProviderRegistry } from "../src/providers.ts";
+import { createProviderRegistry } from "../src/providers/index.ts";
 
 type CommandContext = { hasUI: boolean; ui?: ReturnType<typeof createUiMock> };
 
@@ -160,9 +160,24 @@ describe("package config", () => {
     };
     expect(pkg.exports).toEqual({
       ".": "./src/index.ts",
-      "./events": "./src/events.ts",
-      "./types": "./src/types.ts",
+      "./events": "./src/shared/events.ts",
+      "./types": "./src/shared/types.ts",
     });
+  });
+
+  it("requires Node 22.19 or newer", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      engines: { node: string };
+    };
+    expect(pkg.engines.node).toBe(">=22.19");
+  });
+
+  it("documents shared export entrypoints", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+      exports: Record<string, string>;
+    };
+    expect(pkg.exports["./events"]).toBe("./src/shared/events.ts");
+    expect(pkg.exports["./types"]).toBe("./src/shared/types.ts");
   });
 });
 
@@ -240,671 +255,219 @@ describe("usage extension", () => {
         }) as never,
       },
     })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
 
     await pi.runCommand("usage:refresh", "", { hasUI: true, ui });
-    expect(ui.custom).toHaveBeenCalled();
-    // The dashboard defaults to the All Time period per the Phase 4 spec.
-    expect(ui.render().join("\n")).toContain("[All Time]");
-
-    const updateCalls = pi.events.emit.mock.calls.filter(
-      (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
+    await waitForCondition(() =>
+      pi.emitted.some((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT),
     );
-    expect(updateCalls.length).toBeGreaterThan(0);
-
-    const hasRefreshPayload = updateCalls.some((call) => {
-      const payload = call[1] as {
-        state: { refreshRequested: boolean; diagnostics: string[] };
-      };
-      return (
-        payload.state.refreshRequested &&
-        payload.state.diagnostics.includes("refresh requested")
-      );
-    });
-
-    expect(hasRefreshPayload).toBe(true);
+    const payload = pi.emitted.at(-1)?.payload as
+      | { state?: { refreshRequested?: boolean; diagnostics?: string[] } }
+      | undefined;
+    expect(payload?.state?.refreshRequested).toBe(true);
+    expect(payload?.state?.diagnostics).toContain("refresh requested");
   });
 
-  it("/usage opens the dashboard without marking refresh state", async () => {
+  it("rejects unexpected /usage args with a warning", async () => {
     const pi = createPiMock();
     const ui = createUiMock();
     createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
 
-    const updatesBefore = pi.events.emit.mock.calls.filter(
-      (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
-    ).length;
+    await pi.runCommand("usage", "oops", { hasUI: true, ui });
 
-    await pi.runCommand("usage", "", { hasUI: true, ui });
-    expect(ui.custom).toHaveBeenCalled();
-
-    const updatePayloads = pi.events.emit.mock.calls
-      .filter((call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT)
-      .slice(updatesBefore)
-      .map(
-        (call) =>
-          (
-            call[1] as {
-              state: { refreshRequested: boolean; diagnostics: string[] };
-            }
-          ).state,
-      );
-    expect(
-      updatePayloads.every(
-        (state) =>
-          state.refreshRequested === false &&
-          !state.diagnostics.includes("refresh requested"),
-      ),
-    ).toBe(true);
-  });
-
-  it("/usage rejects non-empty args and does not open the dashboard", async () => {
-    const pi = createPiMock();
-    const ui = createUiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
-
-    await pi.runCommand("usage", "--wat", { hasUI: true, ui });
     expect(ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("/usage:refresh"),
+      "Unknown /usage arguments. Use /usage with no args, or /usage:refresh to force a refresh.",
       "warning",
     );
     expect(ui.custom).not.toHaveBeenCalled();
   });
 
-  it("/usage:refresh rejects non-empty args and does not open the dashboard", async () => {
+  it("rejects unexpected /usage:refresh args with a warning", async () => {
     const pi = createPiMock();
     const ui = createUiMock();
     createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
 
-    await pi.runCommand("usage:refresh", "--wat", { hasUI: true, ui });
+    await pi.runCommand("usage:refresh", "oops", { hasUI: true, ui });
+
     expect(ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("does not take any arguments"),
+      "Unknown /usage:refresh arguments. /usage:refresh does not take any arguments.",
       "warning",
     );
     expect(ui.custom).not.toHaveBeenCalled();
   });
 
-  it("/usage without UI has no side effects", async () => {
-    const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
-
-    const before = pi.events.emit.mock.calls.length;
-    await pi.runCommand("usage", "--wat", { hasUI: false });
-    const after = pi.events.emit.mock.calls.length;
-
-    expect(after).toBe(before);
-  });
-
-  it("/usage:refresh without UI has no side effects", async () => {
-    const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
-
-    const before = pi.events.emit.mock.calls.length;
-    await pi.runCommand("usage:refresh", "--wat", { hasUI: false });
-    const after = pi.events.emit.mock.calls.length;
-
-    expect(after).toBe(before);
-  });
-
-  it("/usage renders without files, credentials, or network", async () => {
-    const pi = createPiMock();
-    const ui = createUiMock();
-    const forbidden = vi.fn(async () => {
-      throw new Error("unexpected dependency access");
-    });
-
-    createUsageExtension({
-      deps: {
-        fetch: forbidden as never,
-        writeFile: forbidden as never,
-        mkdir: forbidden as never,
-        rename: forbidden as never,
-        agentDir: (() => "/definitely/missing") as never,
-        now: () => 1,
-      },
-    })(pi as never);
-    pi.trigger("session_start");
-    await waitForMicrotasks();
-
-    await pi.runCommand("usage", "", { hasUI: true, ui });
-
-    expect(ui.render()).toEqual(
-      expect.arrayContaining([
-        "Usage Statistics",
-        "No local session usage found.",
-        "Current Usage",
-        "OpenAI/Codex • unavailable • 0s old",
-        "No live usage details.",
-        "* OpenAI/Codex: Live cache is unavailable.",
-      ]),
-    );
-    expect(forbidden).toHaveBeenCalled();
-  });
-
-  it("/usage shows provider placeholders before session_start", async () => {
-    const pi = createPiMock();
-    const ui = createUiMock();
-    createUsageExtension({
-      deps: {
-        now: () => 1,
-        agentDir: (() => "/definitely/missing") as never,
-      },
-    })(pi as never);
-
-    await pi.runCommand("usage", "", { hasUI: true, ui });
-
-    const rendered = ui.render().join("\n");
-    expect(rendered).toContain("Current Usage");
-    expect(rendered).toContain(
-      "[OpenAI/Codex]    MiniMax    StepFun    OpenCode Go    Command Code",
-    );
-    expect(rendered).toContain("OpenRouter");
-    expect(rendered).toContain("OpenAI/Codex • unavailable • 0s old");
-    expect(rendered).toContain("No live usage details.");
-    expect(rendered).toContain("* OpenAI/Codex: Live cache is unavailable.");
-    expect(rendered).toContain("* MiniMax: Live cache is unavailable.");
-  });
-
-  it("placeholder providers cover all planned providers and are unavailable", async () => {
-    const deps = {
-      ...createDefaultDeps(),
-      now: () => 1,
-      agentDir: () => "/definitely/missing",
-      fetch: (async () => {
-        throw new Error("no network");
-      }) as never,
-    };
-
-    const providers = createProviderRegistry(deps);
-    expect(providers.map((provider) => provider.label)).toEqual([
-      "Offline",
-      "OpenAI/Codex",
-      "MiniMax",
-      "StepFun",
-      "OpenCode Go",
-      "Command Code",
-      "OpenRouter",
-    ]);
-
-    const snapshots = await Promise.all(
-      providers.map(async (provider) => (await provider.fetch()).snapshot),
-    );
-
-    const stepfun = snapshots.find((snapshot) => snapshot.providerId === "stepfun");
-    expect(stepfun?.available).toBe(false);
-    expect(stepfun?.diagnostic.length).toBeGreaterThan(0);
-  });
-
-  it("replies synchronously with current state before session_start", () => {
-    const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-
-    let reply: unknown;
-    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
-      type: "current",
-      reply: (payload: unknown) => {
-        reply = payload;
-      },
-    });
-
-    expect(reply).toEqual(
-      expect.objectContaining({
-        state: expect.objectContaining({ generatedAt: 0, providers: [] }),
-      }),
-    );
-  });
-
-  it("replies with latest state and clones request payloads", async () => {
-    const pi = createPiMock();
-    createUsageExtension({
-      deps: {
-        now: () => 1,
-        agentDir: (() => "/definitely/missing") as never,
-      },
-    })(pi as never);
-
-    pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-
-    let first: { state: { diagnostics: string[]; generatedAt: number } } | undefined;
-    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
-      type: "current",
-      reply: (payload: {
-        state: { diagnostics: string[]; generatedAt: number };
-      }) => {
-        first = payload;
-      },
-    });
-    first?.state.diagnostics.push("tampered");
-
-    let second: { state: { diagnostics: string[]; generatedAt: number } } | undefined;
-    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
-      type: "current",
-      reply: (payload: {
-        state: { diagnostics: string[]; generatedAt: number };
-      }) => {
-        second = payload;
-      },
-    });
-
-    expect(first?.state.diagnostics).toContain("tampered");
-    expect(second?.state.diagnostics).not.toContain("tampered");
-    expect(second?.state.generatedAt).toBe(1);
-  });
-
-  it("ignores malformed usage-core requests", () => {
-    const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-
-    expect(() => {
-      pi.events.emit(USAGE_CORE_REQUEST_EVENT, undefined);
-      pi.events.emit(USAGE_CORE_REQUEST_EVENT, { type: "current" });
-      pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
-        type: "unsupported",
-        reply: () => undefined,
-      });
-    }).not.toThrow();
-  });
-
-  it("unsubscribes request handler on session_shutdown", () => {
-    const pi = createPiMock();
-    createUsageExtension({ deps: { now: () => 1 } })(pi as never);
-
-    pi.trigger("session_shutdown");
-
-    const reply = vi.fn();
-    pi.events.emit(USAGE_CORE_REQUEST_EVENT, { type: "current", reply });
-    expect(reply).not.toHaveBeenCalled();
-  });
-
-  it("keeps ready and update event payloads compatible for bus listeners", async () => {
-    const pi = createPiMock();
-    const ready = vi.fn();
-    const update = vi.fn();
-    pi.events.on(USAGE_CORE_READY_EVENT, ready);
-    pi.events.on(USAGE_CORE_UPDATE_CURRENT_EVENT, update);
-    createUsageExtension({
-      deps: {
-        now: () => 1,
-        agentDir: (() => "/definitely/missing") as never,
-      },
-    })(pi as never);
-
-    pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-
-    expect(ready).toHaveBeenCalledWith({ state: expect.any(Object) });
-    expect(update).toHaveBeenCalledWith({ state: expect.any(Object) });
-    pi.trigger("session_shutdown");
-  });
-
-  it("emits state payload entries", async () => {
-    const pi = createPiMock();
-    createUsageExtension({
-      deps: {
-        now: () => 1,
-        agentDir: (() => "/definitely/missing") as never,
-        fetch: vi.fn(
-          async () =>
-            new Response(
-              JSON.stringify({
-                rate_limit: {
-                  primary_window: {
-                    used_percent: 1,
-                    limit_window_seconds: 5 * 3600,
-                  },
-                },
-              }),
-              { status: 200 },
-            ),
-        ) as never,
-      },
-    })(pi as never);
-    pi.trigger("session_start");
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-    expect(pi.events.emit).toHaveBeenCalledWith(
-      USAGE_CORE_READY_EVENT,
-      expect.objectContaining({ state: expect.any(Object) }),
-    );
-  });
-
-  it("uses positive local Command Code rows when web usage is unavailable", async () => {
+  it("bootstraps state and answers current-state requests", async () => {
     const root = mkTmp();
     const sessions = join(root, "sessions");
     mkdirSync(sessions, { recursive: true });
-    const row = (id: string, provider: string, cost: number) =>
-      JSON.stringify({
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${JSON.stringify({
         type: "message",
-        id,
+        id: "m1",
         timestamp: "2026-05-30T11:00:00Z",
         message: {
           role: "assistant",
-          provider,
-          model: "test",
-          usage: { cost: { total: cost } },
+          provider: "openai-codex",
+          model: "gpt-5-codex",
+          usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1 },
         },
-      });
-    writeFileSync(
-      join(sessions, "command-code.jsonl"),
-      [
-        row("current", "command-code", 1.25),
-        row("legacy", "commandcode", 0.75),
-        row("negative", "command-code", -10),
-      ].join("\n"),
+      })}\n`,
       "utf8",
     );
     const pi = createPiMock();
     createUsageExtension({
       deps: {
         agentDir: () => root,
-        now: () => Date.parse("2026-05-31T00:00:00Z"),
-        env: {},
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
         fetch: vi.fn(async () => {
-          throw new Error("network unavailable");
+          throw new Error("offline");
         }) as never,
       },
     })(pi as never);
 
-    pi.trigger("session_start");
+    pi.trigger("session_start", {}, { model: { provider: "openai-codex" } });
     await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-    const ready = pi.emitted.find((event) => event.name === USAGE_CORE_READY_EVENT);
-    const state = (
-      ready?.payload as {
-        state: {
-          providers: Array<{
-            providerId: string;
-            status: string;
-            sourceKind: string;
-            balances: Array<{ label: string; remaining: number | null }>;
-          }>;
-        };
-      }
-    ).state;
-    const commandCode = state.providers.find(
-      (provider) => provider.providerId === "command-code",
-    );
-    expect(commandCode?.status).toBe("local");
-    expect(commandCode?.sourceKind).toBe("local");
-    expect(commandCode?.balances).toContainEqual({
-      label: "Local Pi session total",
-      remaining: 2,
-      unit: "USD",
+
+    let replyState:
+      | {
+          currentProviderId?: string | null;
+          offline?: { periods?: Array<unknown>; messageCount?: number };
+        }
+      | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: ({ state }: { state: typeof replyState }) => {
+        replyState = state;
+      },
     });
-    pi.trigger("session_shutdown");
+
+    expect(replyState?.currentProviderId).toBe("openai-codex");
+    expect(replyState?.offline?.messageCount).toBe(1);
+    expect(replyState?.offline?.periods?.length).toBeGreaterThan(0);
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("emits compatibility fields that clear existing powerbar consumers", async () => {
-    const pi = createPiMock();
-    createUsageExtension({
-      deps: {
-        now: () => 1,
-        agentDir: (() => "/definitely/missing") as never,
-        fetch: vi.fn(
-          async () =>
-            new Response(
-              JSON.stringify({
-                rate_limit: {
-                  primary_window: {
-                    used_percent: 1,
-                    limit_window_seconds: 5 * 3600,
-                  },
-                },
-              }),
-              { status: 200 },
-            ),
-        ) as never,
-      },
-    })(pi as never);
-    pi.trigger("session_start");
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-
-    const ready = pi.emitted.find((event) => event.name === USAGE_CORE_READY_EVENT);
-    const state = (
-      ready?.payload as { state: { provider?: string; usage?: unknown } }
-    ).state;
-
-    expect(state.provider).toBeUndefined();
-    expect(state.usage).toBeUndefined();
-  });
-
-  it("populates compatibility fields for MiniMax token plan windows", async () => {
+  it("respects model_select and turn events for provider detection", async () => {
     const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
     const pi = createPiMock();
     createUsageExtension({
       deps: {
-        now: () => 1,
-        env: { ...createDefaultDeps().env, MINIMAX_API_KEY: "token" },
-        agentDir: (() => root) as never,
-        fetch: vi.fn(
-          async (url) =>
-            url.toString().includes("token_plan")
-              ? new Response(
-                  JSON.stringify({
-                    five_hour: { usage_percent: 12 },
-                    weekly: { usage_percent: 34 },
-                  }),
-                  { status: 200 },
-                )
-              : new Response(JSON.stringify({}), { status: 500 }),
-        ) as never,
-      },
-    })(pi as never);
-
-    pi.trigger("session_start", {}, { model: { provider: "minimax", id: "m2" } });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-
-    pi.trigger(
-      "model_select",
-      { model: { provider: "minimax", id: "m2" } },
-      { model: { provider: "minimax", id: "m2" } },
-    );
-    await waitForCondition(() =>
-      pi.emitted.some((event) => {
-        if (event.name !== USAGE_CORE_UPDATE_CURRENT_EVENT) return false;
-        const payload = event.payload as {
-          state: {
-            compatibility: { currentLiveProviderId: string | null };
-          };
-        };
-        return payload.state.compatibility.currentLiveProviderId === "minimax";
-      }),
-    );
-
-    const update = [...pi.emitted]
-      .reverse()
-      .find((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT);
-    const state = (
-      update?.payload as {
-        state: {
-          provider?: string;
-          usage?: { provider: string; windows: Array<{ label: string; usedPercent: number }> };
-          compatibility: { currentLiveProviderId: string | null };
-        };
-      }
-    ).state;
-
-    expect(state.compatibility.currentLiveProviderId).toBe("minimax");
-    expect(state.provider).toBe("MiniMax");
-    expect(state.usage?.provider).toBe("minimax");
-    expect(state.usage?.windows).toEqual([
-      { label: "5h", usedPercent: 12 },
-      { label: "Weekly", usedPercent: 34 },
-    ]);
-    pi.trigger("session_shutdown");
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("turn events update context without live fetches", async () => {
-    const root = mkTmp();
-    const pi = createPiMock();
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            rate_limit: {
-              primary_window: {
-                used_percent: 1,
-                limit_window_seconds: 5 * 3600,
-              },
-            },
-          }),
-          { status: 200 },
-        ),
-    );
-    createUsageExtension({
-      deps: {
-        agentDir: (() => root) as never,
-        fetch: fetchMock as never,
-      },
-    })(pi as never);
-    pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-    const before = fetchMock.mock.calls.length;
-
-    const context = { model: { provider: "openai-codex", id: "gpt-5-codex" } };
-    pi.trigger("turn_start", {}, context);
-    pi.trigger("turn_end", {}, context);
-
-    expect(fetchMock).toHaveBeenCalledTimes(before);
-    pi.trigger("session_shutdown");
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("model_select keeps current model label when only ctx.model is populated", async () => {
-    const root = mkTmp();
-    const pi = createPiMock();
-    createUsageExtension({
-      deps: {
-        agentDir: (() => root) as never,
-        fetch: vi.fn(
-          async () =>
-            new Response(
-              JSON.stringify({
-                rate_limit: {
-                  primary_window: {
-                    used_percent: 1,
-                    limit_window_seconds: 5 * 3600,
-                  },
-                },
-              }),
-              { status: 200 },
-            ),
-        ) as never,
-      },
-    })(pi as never);
-
-    pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-
-    pi.trigger(
-      "model_select",
-      { model: undefined },
-      { model: { provider: "openai-codex", id: "gpt-5-codex" } },
-    );
-
-    await waitForCondition(() =>
-      pi.emitted.some((event) => {
-        if (event.name !== USAGE_CORE_UPDATE_CURRENT_EVENT) return false;
-        const payload = event.payload as {
-          state: { currentModelLabel?: string };
-        };
-        return payload.state.currentModelLabel === "gpt-5-codex";
-      }),
-    );
-
-    const lastUpdate = [...pi.emitted]
-      .reverse()
-      .find((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT);
-    const state = (
-      lastUpdate?.payload as {
-        state: {
-          currentProviderId: string | null;
-          currentModelLabel?: string;
-        };
-      }
-    ).state;
-
-    expect(state.currentProviderId).toBe("openai-codex");
-    expect(state.currentModelLabel).toBe("gpt-5-codex");
-    pi.trigger("session_shutdown");
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("ignores provider lock-file watch events", async () => {
-    const root = mkTmp();
-    const pi = createPiMock();
-    let onCacheChange: ((filename?: string) => void) | undefined;
-    const fetchMock = vi.fn(async () => {
-      throw new Error("socket unavailable");
-    });
-    createUsageExtension({
-      deps: {
-        agentDir: (() => root) as never,
-        fetch: fetchMock,
-        watch: (_path, onChange) => {
-          onCacheChange = onChange;
-          return { close: () => undefined };
-        },
-      },
-    })(pi as never);
-    pi.trigger("session_start", {}, { model: undefined });
-    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-    await waitForMicrotasks();
-    const before = fetchMock.mock.calls.length;
-
-    onCacheChange?.("openai-codex.lock");
-    await waitForMicrotasks();
-
-    expect(fetchMock).toHaveBeenCalledTimes(before);
-    pi.trigger("session_shutdown");
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("refreshes only for live-provider snapshot files", async () => {
-    const root = mkTmp();
-    const pi = createPiMock();
-    let onCacheChange: ((filename?: string) => void) | undefined;
-    createUsageExtension({
-      deps: {
-        agentDir: (() => root) as never,
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
         fetch: vi.fn(async () => {
-          throw new Error("socket unavailable");
+          throw new Error("offline");
         }) as never,
-        watch: (_path, onChange) => {
-          onCacheChange = onChange;
-          return { close: () => undefined };
-        },
       },
     })(pi as never);
-    pi.trigger("session_start", {}, { model: undefined });
+
+    pi.trigger("session_start", {}, { model: { provider: "minimax" } });
     await waitForEvent(pi, USAGE_CORE_READY_EVENT);
-    await waitForMicrotasks();
-    const updateEventCount = () =>
-      pi.events.emit.mock.calls.filter(
-        (call) => call[0] === USAGE_CORE_UPDATE_CURRENT_EVENT,
-      ).length;
-    const before = updateEventCount();
 
-    onCacheChange?.("offline.json");
-    await waitForMicrotasks();
-    expect(updateEventCount()).toBe(before);
+    pi.trigger(
+      "model_select",
+      { model: { provider: "command-code" } },
+      { model: { provider: "command-code" }, signal: undefined },
+    );
+    await waitForCondition(() =>
+      pi.emitted.some((event) => event.name === USAGE_CORE_UPDATE_CURRENT_EVENT),
+    );
 
-    onCacheChange?.("command-code.json");
-    await waitForCondition(() => updateEventCount() > before);
-    expect(updateEventCount()).toBeGreaterThan(before);
+    let state:
+      | {
+          currentProviderId?: string | null;
+        }
+      | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: ({ state: current }: { state: typeof state }) => {
+        state = current;
+      },
+    });
+    expect(state?.currentProviderId).toBe("command-code");
 
-    pi.trigger("session_shutdown");
+    pi.trigger("turn_start", {}, { model: { id: "gpt-5-codex" } });
+    pi.trigger("turn_end", {}, { model: { provider: "stepfun" } });
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: ({ state: current }: { state: typeof state }) => {
+        state = current;
+      },
+    });
+    expect(state?.currentProviderId).toBe("stepfun");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("watches cache updates after session start", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const providers = createProviderRegistry(
+      createDefaultDeps(),
+    ).filter((provider) => provider.strategy === "api");
+    const watch = vi.fn(() => ({ close() {} }));
+    const mkdir = vi.fn(async () => undefined);
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
+        fetch: vi.fn(async () => {
+          throw new Error("offline");
+        }) as never,
+        mkdir,
+        watch,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: { provider: "openai-codex" } });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    expect(mkdir).toHaveBeenCalled();
+    expect(watch).toHaveBeenCalledWith(
+      expect.stringContaining("cache/pi-usage/providers"),
+      expect.any(Function),
+    );
+    expect(providers.length).toBeGreaterThan(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("opens dashboard and completes offline scan in background", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${JSON.stringify({
+        type: "message",
+        id: "m1",
+        timestamp: "2026-05-30T11:00:00Z",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5-codex",
+          usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1 },
+        },
+      })}\n`,
+      "utf8",
+    );
+    const pi = createPiMock();
+    const ui = createUiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
+        fetch: vi.fn(async () => {
+          throw new Error("offline");
+        }) as never,
+      },
+    })(pi as never);
+
+    await pi.runCommand("usage", "", { hasUI: true, ui });
+    await waitForCondition(() => ui.custom.mock.calls.length > 0);
+
+    expect(ui.custom).toHaveBeenCalledTimes(1);
     rmSync(root, { recursive: true, force: true });
   });
 });

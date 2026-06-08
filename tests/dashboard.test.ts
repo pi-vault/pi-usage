@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TUI } from "@earendil-works/pi-tui";
-import { UsageDashboardComponent } from "../src/ui/dashboard.ts";
+import { UsageDashboardComponent } from "../src/tui/dashboard.ts";
 import {
   type DashboardTheme,
   noTheme,
-} from "../src/ui/dashboard-theme.ts";
-import type { LiveUsageWindow, UsageCoreState } from "../src/types.ts";
+} from "../src/tui/dashboard-theme.ts";
+import type { LiveUsageWindow, UsageCoreState } from "../src/shared/types.ts";
 
 const ANSI_ESCAPE = "\u001b";
 const ANSI_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*m`, "g");

@@ -2,8 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDefaultDeps } from "../src/deps.ts";
-import { buildInsights, scanOfflineUsage } from "../src/offline.ts";
+import { createDefaultDeps } from "../src/shared/deps.ts";
+import { buildInsights, scanOfflineUsage } from "../src/core/offline.ts";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "pi-usage-"));
