@@ -3,13 +3,13 @@ import {
   DEFAULT_BACKOFF_MS,
   LOCK_TIMINGS_MS,
   PROVIDER_LABELS,
-} from "../constants.ts";
-import type { UsageDeps } from "../deps.ts";
+} from "../shared/constants.ts";
+import type { UsageDeps } from "../shared/deps.ts";
 import type {
   ProviderFetchOutcome,
   ProviderId,
   ProviderUsageSnapshot,
-} from "../types.ts";
+} from "../shared/types.ts";
 
 export function unavailableSnapshot(
   deps: UsageDeps,

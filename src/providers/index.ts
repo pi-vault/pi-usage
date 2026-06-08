@@ -1,6 +1,6 @@
-import { PROVIDER_ORDER } from "../constants.ts";
-import type { UsageDeps } from "../deps.ts";
-import type { UsageProviderAdapter } from "../types.ts";
+import { PROVIDER_ORDER } from "../shared/constants.ts";
+import type { UsageDeps } from "../shared/deps.ts";
+import type { UsageProviderAdapter } from "../shared/types.ts";
 import { createCommandCodeProvider } from "./command-code.ts";
 import { createMiniMaxProvider } from "./minimax.ts";
 import { createOfflineProvider } from "./offline.ts";
@@ -23,5 +23,11 @@ export function createProviderRegistry(
     "command-code": createCommandCodeProvider(deps),
     openrouter: createOpenRouterProvider(deps),
   };
-  return PROVIDER_ORDER.map((id) => providers[id]);
+  return PROVIDER_ORDER.map((id) => {
+    const provider = providers[id];
+    if (!provider) {
+      throw new Error(`missing provider adapter for ${id}`);
+    }
+    return provider;
+  });
 }

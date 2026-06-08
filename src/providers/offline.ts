@@ -1,6 +1,6 @@
-import { PROVIDER_LABELS } from "../constants.ts";
-import type { UsageDeps } from "../deps.ts";
-import type { UsageProviderAdapter } from "../types.ts";
+import { PROVIDER_LABELS } from "../shared/constants.ts";
+import type { UsageDeps } from "../shared/deps.ts";
+import type { UsageProviderAdapter } from "../shared/types.ts";
 import { unavailableSnapshot } from "./runtime.ts";
 
 export function createOfflineProvider(deps: UsageDeps): UsageProviderAdapter {

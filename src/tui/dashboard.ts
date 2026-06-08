@@ -6,14 +6,14 @@ import {
   type TUI,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { PERIOD_ORDER, UI_STRINGS } from "../constants.ts";
+import { PERIOD_ORDER, UI_STRINGS } from "../shared/constants.ts";
 import type {
   AggregatedUsagePeriod,
   AggregatedUsageRow,
   ProviderUsageSnapshot,
   UsageCoreState,
   UsageWindow,
-} from "../types.ts";
+} from "../shared/types.ts";
 import {
   type DashboardTheme,
   fromPiTheme,
