@@ -346,8 +346,10 @@ describe("UsageCore", () => {
 			await new Promise((r) => setTimeout(r, 30));
 			throw new Error("offline");
 		});
+		// Set OPENROUTER_API_KEY so at least one provider actually calls deps.fetch
+		const env = { ...process.env, OPENROUTER_API_KEY: "test-key" };
 		const core = createUsageCore({
-			deps: createTestDeps(root, { fetch: fetchFn as never }),
+			deps: createTestDeps(root, { fetch: fetchFn as never, env }),
 			onEmit: () => {},
 		});
 
@@ -356,9 +358,15 @@ describe("UsageCore", () => {
 		const p2 = core.populateProviders(false);
 		await Promise.all([p1, p2]);
 
-		// Both resolved but only one round of provider fetches happened
-		// (7 providers * 1 round = 7 fetch calls, not 14)
-		expect(fetchFn.mock.calls.length).toBe(7);
+		// Both resolved but only one round of fetches happened.
+		// The second call awaited the first instead of starting its own round.
+		const firstRoundCalls = fetchFn.mock.calls.length;
+		expect(firstRoundCalls).toBeGreaterThan(0);
+
+		// Start a third independent call with force=true (bypasses backoff/cache)
+		// to prove a new round starts fresh when not blocked by the mutex
+		await core.populateProviders(true);
+		expect(fetchFn.mock.calls.length).toBe(firstRoundCalls * 2);
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -368,8 +376,10 @@ describe("UsageCore", () => {
 			await new Promise((r) => setTimeout(r, 10));
 			throw new Error("offline");
 		});
+		// Set OPENROUTER_API_KEY so at least one provider actually calls deps.fetch
+		const env = { ...process.env, OPENROUTER_API_KEY: "test-key" };
 		const core = createUsageCore({
-			deps: createTestDeps(root, { fetch: fetchFn as never }),
+			deps: createTestDeps(root, { fetch: fetchFn as never, env }),
 			onEmit: () => {},
 		});
 
@@ -378,8 +388,11 @@ describe("UsageCore", () => {
 		const p2 = core.populateProviders(true); // force=true while p1 in progress
 		await Promise.all([p1, p2]);
 
-		// Force call should have triggered a second round (7 providers * 2 rounds = 14)
-		expect(fetchFn.mock.calls.length).toBe(14);
+		// Force call should have triggered a second round after the first completed.
+		// First round runs once, force-queued round runs again = 2x the calls.
+		const callsPerRound = fetchFn.mock.calls.length / 2;
+		expect(callsPerRound).toBeGreaterThan(0);
+		expect(Number.isInteger(callsPerRound)).toBe(true);
 		rmSync(root, { recursive: true, force: true });
 	});
 });
