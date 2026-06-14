@@ -147,4 +147,16 @@ describe("formatRatio", () => {
     });
     expect(result).toBe("1.5k/3k requests");
   });
+
+  it("formats generic unit with abbreviations", () => {
+    const result = formatRatio({
+      key: "k",
+      label: "l",
+      usedPercent: 25,
+      used: 500_000,
+      limit: 2_000_000,
+      unit: "tokens",
+    });
+    expect(result).toBe("500k/2M tokens");
+  });
 });
