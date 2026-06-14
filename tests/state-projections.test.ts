@@ -114,11 +114,11 @@ describe("projectState", () => {
     expect(result.compatibility.currentLiveProviderSnapshot).toEqual(snapshot);
     expect(result.provider).toBe("OpenAI/Codex");
     expect(result.usage).toBeDefined();
-    expect(result.usage!.provider).toBe("openai-codex");
-    expect(result.usage!.displayName).toBe("OpenAI/Codex");
+    expect(result.usage?.provider).toBe("openai-codex");
+    expect(result.usage?.displayName).toBe("OpenAI/Codex");
     // Only fiveHour window (daily excluded from usage.windows)
-    expect(result.usage!.windows).toHaveLength(1);
-    expect(result.usage!.windows[0]).toEqual({
+    expect(result.usage?.windows).toHaveLength(1);
+    expect(result.usage?.windows[0]).toEqual({
       label: "5-hour",
       usedPercent: 42,
     });
@@ -138,8 +138,8 @@ describe("projectState", () => {
     );
     expect(result.compatibility.currentLiveProviderId).toBe("minimax");
     expect(result.provider).toBe("MiniMax");
-    expect(result.usage!.windows).toHaveLength(1);
-    expect(result.usage!.windows[0]).toEqual({
+    expect(result.usage?.windows).toHaveLength(1);
+    expect(result.usage?.windows[0]).toEqual({
       label: "Weekly",
       usedPercent: 75,
     });
@@ -167,8 +167,8 @@ describe("projectState", () => {
     // Gate passes because fiveHour is valid
     expect(result.compatibility.currentLiveProviderId).toBe("openai-codex");
     // usage.windows only includes fiveHour (weekly filtered due to unavailableReason)
-    expect(result.usage!.windows).toHaveLength(1);
-    expect(result.usage!.windows[0]).toEqual({ label: "5h", usedPercent: 30 });
+    expect(result.usage?.windows).toHaveLength(1);
+    expect(result.usage?.windows[0]).toEqual({ label: "5h", usedPercent: 30 });
   });
 
   it("handles provider with empty windows (gate fails)", () => {

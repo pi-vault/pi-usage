@@ -1,5 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildInsights, scanOfflineUsage } from "./core/offline.ts";
+import {
+  projectState,
+  type InternalState,
+} from "./core/state-projections.ts";
 import { createProviderRegistry, providerCacheDir } from "./providers/index.ts";
 import { createDefaultDeps, type UsageDeps } from "./shared/deps.ts";
 import {
@@ -9,7 +13,6 @@ import {
   type UsageCoreCurrentRequest,
   type UsageCorePayload,
 } from "./shared/events.ts";
-import type { UsageCoreState } from "./shared/types.ts";
 import { buildPeriods } from "./tui/dashboard-model.ts";
 import { openDashboard } from "./tui/dashboard.ts";
 
@@ -31,7 +34,7 @@ function mergeDeps(overrides?: Partial<UsageDeps>): UsageDeps {
   return { ...createDefaultDeps(), ...overrides };
 }
 
-function createInitialState(): UsageCoreState {
+function createInitialState(): InternalState {
   return {
     refreshRequested: false,
     generatedAt: 0,
@@ -45,13 +48,8 @@ function createInitialState(): UsageCoreState {
     },
     insights: [],
     currentProviderId: null,
-    currentProviderSnapshot: null,
     providers: [],
     diagnostics: [],
-    compatibility: {
-      currentLiveProviderId: null,
-      currentLiveProviderSnapshot: null,
-    },
   };
 }
 
@@ -85,10 +83,6 @@ export function detectProviderFromModel(
   return undefined;
 }
 
-function cloneState(state: UsageCoreState): UsageCoreState {
-  return JSON.parse(JSON.stringify(state)) as UsageCoreState;
-}
-
 function isCurrentRequest(value: unknown): value is UsageCoreCurrentRequest {
   return (
     typeof value === "object" &&
@@ -118,7 +112,9 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     );
 
     const emit = (name: string) => {
-      const payload: UsageCorePayload = { state: cloneState(state) };
+      const payload: UsageCorePayload = {
+        state: structuredClone(projectState(state)),
+      };
       pi.events.emit(name, payload);
     };
 
@@ -127,40 +123,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     let periodicRefresh: NodeJS.Timeout | undefined;
     let cacheWatcher: { close: () => void } | undefined;
     let localCommandCodeCost = 0;
-
-    const syncCompatibility = () => {
-      const current =
-        state.providers.find((s) => s.providerId === state.currentProviderId) ??
-        null;
-      state.currentProviderSnapshot = current;
-      const hasCompatibilityWindows = Boolean(
-        current?.windows.some(
-          (window) =>
-            (window.key === "fiveHour" || window.key === "weekly") &&
-            !window.unavailableReason,
-        ),
-      );
-      state.compatibility.currentLiveProviderId =
-        hasCompatibilityWindows && current ? current.providerId : null;
-      state.compatibility.currentLiveProviderSnapshot = state.compatibility
-        .currentLiveProviderId
-        ? current
-        : null;
-      if (state.compatibility.currentLiveProviderId && current) {
-        state.provider = current.providerLabel;
-        state.usage = {
-          provider: current.providerId,
-          displayName: current.providerLabel,
-          windows: current.windows
-            .filter((w) => w.key === "fiveHour" || w.key === "weekly")
-            .filter((w) => !w.unavailableReason)
-            .map((w) => ({ label: w.label, usedPercent: w.usedPercent })),
-        };
-      } else {
-        state.provider = undefined;
-        state.usage = undefined;
-      }
-    };
 
     const applyCommandCodeLocalFallback = () => {
       const ccIndex = state.providers.findIndex(
@@ -240,7 +202,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         .then((snapshots) => {
           state.providers = snapshots;
           applyCommandCodeLocalFallback();
-          syncCompatibility();
         })
         .finally(() => {
           providerRefresh = null;
@@ -274,7 +235,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
         .reduce((sum, turn) => sum + turn.cost, 0);
 
       applyCommandCodeLocalFallback();
-      syncCompatibility();
 
       state.generatedAt = deps.now();
       state.loading = false;
@@ -298,7 +258,6 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
     ) => {
       state.currentProviderId = detectProviderFromModel(model) ?? null;
       state.currentModelLabel = model?.id ?? model?.name;
-      syncCompatibility();
     };
 
     const emitProviderUpdate = async (force = false, signal?: AbortSignal) => {
@@ -330,7 +289,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       USAGE_CORE_REQUEST_EVENT,
       (payload: unknown) => {
         if (!isCurrentRequest(payload)) return;
-        payload.reply({ state: cloneState(state) });
+        payload.reply({ state: structuredClone(projectState(state)) });
       },
     );
 
@@ -400,7 +359,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           return;
         }
         const { cancelScan, scan } = await prepareUsageDashboard(false);
-        await openDashboard(ctx, state, cancelScan);
+        await openDashboard(ctx, projectState(state), cancelScan);
         await scan;
       },
     });
@@ -417,7 +376,7 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
           return;
         }
         const { cancelScan, scan } = await prepareUsageDashboard(true);
-        await openDashboard(ctx, state, cancelScan);
+        await openDashboard(ctx, projectState(state), cancelScan);
         await scan;
       },
     });
