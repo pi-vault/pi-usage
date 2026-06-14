@@ -1,7 +1,6 @@
 import type { UsageDeps } from "../shared/deps.ts";
 import type {
 	ProviderId,
-	ProviderUsageSnapshot,
 	UsageCoreState,
 } from "../shared/types.ts";
 import {

@@ -2,14 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createUsageCore, type UsageCore } from "../src/core/usage-core.ts";
+import { createUsageCore } from "../src/core/usage-core.ts";
 import { createDefaultDeps } from "../src/shared/deps.ts";
 import {
 	USAGE_CORE_READY_EVENT,
 	USAGE_CORE_UPDATE_CURRENT_EVENT,
-	type UsageCorePayload,
 } from "../src/shared/events.ts";
-import type { UsageCoreState } from "../src/shared/types.ts";
 
 function mkTmp(): string {
 	return mkdtempSync(join(tmpdir(), "pi-usage-core-"));
