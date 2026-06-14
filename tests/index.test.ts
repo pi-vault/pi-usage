@@ -470,4 +470,137 @@ describe("usage extension", () => {
     expect(ui.custom).toHaveBeenCalledTimes(1);
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("emits derived compatibility fields when provider has valid windows", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+
+    const codexResponse = {
+      rate_limit: {
+        primary_window: {
+          limit_window_seconds: 5 * 3600,
+          used_percent: 42,
+          reset_at: Date.parse("2026-05-30T17:00:00Z") / 1000,
+        },
+        secondary_window: {
+          limit_window_seconds: 7 * 24 * 3600,
+          used_percent: 15,
+          reset_at: Date.parse("2026-06-06T00:00:00Z") / 1000,
+        },
+      },
+    };
+
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
+        env: { OPENAI_CODEX_OAUTH_TOKEN: "test-token" },
+        fetch: vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => codexResponse,
+          text: async () => JSON.stringify(codexResponse),
+        })) as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: { provider: "openai-codex" } });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    let state:
+      | {
+          currentProviderId?: string | null;
+          currentProviderSnapshot?: { providerId?: string; windows?: Array<{ key?: string }> } | null;
+          provider?: string;
+          usage?: { provider?: string; displayName?: string; windows?: Array<{ label?: string; usedPercent?: number }> };
+          compatibility?: {
+            currentLiveProviderId?: string | null;
+            currentLiveProviderSnapshot?: { providerId?: string } | null;
+          };
+        }
+      | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: ({ state: current }: { state: typeof state }) => {
+        state = current;
+      },
+    });
+
+    // currentProviderSnapshot is always populated when provider matches
+    expect(state?.currentProviderSnapshot).not.toBeNull();
+    expect(state?.currentProviderSnapshot?.providerId).toBe("openai-codex");
+    expect(state?.currentProviderSnapshot?.windows?.length).toBeGreaterThan(0);
+
+    // compatibility gate passes (has fiveHour + weekly windows)
+    expect(state?.compatibility?.currentLiveProviderId).toBe("openai-codex");
+    expect(state?.compatibility?.currentLiveProviderSnapshot?.providerId).toBe(
+      "openai-codex",
+    );
+
+    // provider label
+    expect(state?.provider).toBe("OpenAI/Codex");
+
+    // usage compat with filtered windows (only fiveHour + weekly, mapped to RateWindow)
+    expect(state?.usage?.provider).toBe("openai-codex");
+    expect(state?.usage?.displayName).toBe("OpenAI/Codex");
+    expect(state?.usage?.windows).toHaveLength(2);
+    expect(state?.usage?.windows?.[0]?.label).toBe("5h");
+    expect(state?.usage?.windows?.[0]?.usedPercent).toBe(42);
+    expect(state?.usage?.windows?.[1]?.label).toBe("Week");
+    expect(state?.usage?.windows?.[1]?.usedPercent).toBe(15);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("emits null compatibility when provider has no valid compat windows", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+
+    const pi = createPiMock();
+    createUsageExtension({
+      deps: {
+        agentDir: () => root,
+        now: () => Date.parse("2026-05-30T12:00:00Z"),
+        fetch: vi.fn(async () => {
+          throw new Error("offline");
+        }) as never,
+      },
+    })(pi as never);
+
+    pi.trigger("session_start", {}, { model: { provider: "openai-codex" } });
+    await waitForEvent(pi, USAGE_CORE_READY_EVENT);
+
+    let state:
+      | {
+          currentProviderId?: string | null;
+          currentProviderSnapshot?: unknown;
+          provider?: string;
+          usage?: unknown;
+          compatibility?: {
+            currentLiveProviderId?: string | null;
+            currentLiveProviderSnapshot?: unknown;
+          };
+        }
+      | undefined;
+    pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
+      type: "current",
+      reply: ({ state: current }: { state: typeof state }) => {
+        state = current;
+      },
+    });
+
+    expect(state?.currentProviderId).toBe("openai-codex");
+    // Provider lookup still works but returns unavailable snapshot
+    // compatibility gate fails (no valid fiveHour/weekly windows)
+    expect(state?.compatibility?.currentLiveProviderId).toBeNull();
+    expect(state?.compatibility?.currentLiveProviderSnapshot).toBeNull();
+    expect(state?.provider).toBeUndefined();
+    expect(state?.usage).toBeUndefined();
+
+    rmSync(root, { recursive: true, force: true });
+  });
 });
