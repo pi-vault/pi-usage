@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Decompose `src/providers/opencode-go.ts` (558 lines, 5 concerns) into focused modules, each independently testable.
+**Goal:** Decompose `src/providers/opencode-go.ts` (538 lines, 5 concerns) into focused modules, each independently testable.
 
 **Architecture:** Convert single file into a module directory. The orchestrator (`index.ts`) wires together a dashboard scraper, SQLite reader, and window calculator. Each module receives only what it needs and returns typed results.
 
@@ -18,11 +18,11 @@
 
 | File                                             | Responsibility                                                                                     | ~Lines |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------- | ------ |
-| `src/providers/opencode-go/types.ts`             | Shared `CostRow` type                                                                              | 5      |
-| `src/providers/opencode-go/dashboard-scraper.ts` | `fetchDashboard`, `parseDashboardWindows`, `normalizeWorkspaceId`, `filterCookieHeader`, `addSecs` | ~120   |
-| `src/providers/opencode-go/sqlite-reader.ts`     | `resolveOpencodeDbPath`, `collectSqliteRows`                                                       | ~140   |
-| `src/providers/opencode-go/window-calculator.ts` | `rolling5h`, `utcMondayStart`, `anchoredMonthWindow`, `collectPiRows`                              | ~80    |
-| `src/providers/opencode-go/index.ts`             | `buildOpenCodeGoSnapshot`, `createOpenCodeGoProvider` (orchestrator)                               | ~100   |
+| `src/providers/opencode-go/types.ts`             | Shared `CostRow` type                                                                              | ~5     |
+| `src/providers/opencode-go/dashboard-scraper.ts` | `fetchDashboard`, `parseDashboardWindows`, `normalizeWorkspaceId`, `filterCookieHeader`, `addSecs` | ~145   |
+| `src/providers/opencode-go/sqlite-reader.ts`     | `resolveOpencodeDbPath`, `collectSqliteRows`                                                       | ~170   |
+| `src/providers/opencode-go/window-calculator.ts` | `rolling5h`, `utcMondayStart`, `anchoredMonthWindow`, `collectPiRows`                              | ~70    |
+| `src/providers/opencode-go/index.ts`             | `buildOpenCodeGoSnapshot`, `createOpenCodeGoProvider` (orchestrator)                               | ~170   |
 
 ---
 
@@ -62,11 +62,11 @@ feat(opencode-go): create module directory with shared CostRow type
 
 Move these functions from the original `opencode-go.ts`:
 
-- `normalizeWorkspaceId` (lines 33-46) — keep `export`
-- `filterCookieHeader` (lines 48-64) — keep `export`
-- `addSecs` (lines 66-69)
-- `parseDashboardWindows` (lines 71-113)
-- `fetchDashboard` (lines 115-178)
+- `normalizeWorkspaceId` (lines 20-33) — keep `export`
+- `filterCookieHeader` (lines 35-51) — keep `export`
+- `addSecs` (lines 53-56)
+- `parseDashboardWindows` (lines 58-100)
+- `fetchDashboard` (lines 102-158)
 
 ```typescript
 // src/providers/opencode-go/dashboard-scraper.ts
@@ -75,23 +75,22 @@ import type { LiveUsageWindow } from "../../shared/types.ts";
 import { clampPercent, fetchWithTimeout } from "../runtime.ts";
 
 export function normalizeWorkspaceId(raw: string): string | undefined {
-  // ... exact existing implementation from lines 33-46
+  // ... exact existing implementation from lines 20-33
 }
 
 export function filterCookieHeader(raw: string): string | undefined {
-  // ... exact existing implementation from lines 48-64
+  // ... exact existing implementation from lines 35-51
 }
 
 function addSecs(now: number, sec: number | undefined): number | undefined {
-  // ... exact existing implementation from lines 66-69
+  // ... exact existing implementation from lines 53-56
 }
 
 function parseDashboardWindows(
   html: string,
   now: number,
 ): LiveUsageWindow[] | undefined {
-  // ... exact existing implementation from lines 71-113
-  // Replace clampPct → clampPercent (already done in Phase 1)
+  // ... exact existing implementation from lines 58-100
 }
 
 export async function fetchDashboard(
@@ -100,8 +99,7 @@ export async function fetchDashboard(
   cookieHeader: string,
   signal: AbortSignal | undefined,
 ): Promise<{ windows?: LiveUsageWindow[]; diagnostic?: string }> {
-  // ... exact existing implementation from lines 115-178
-  // Already uses fetchWithTimeout after Phase 1
+  // ... exact existing implementation from lines 102-158
 }
 ```
 
@@ -128,8 +126,8 @@ refactor(opencode-go): extract dashboard-scraper module
 
 Move these functions:
 
-- `resolveOpencodeDbPath` (lines 180-214)
-- `collectSqliteRows` (lines 216-345)
+- `resolveOpencodeDbPath` (lines 160-194)
+- `collectSqliteRows` (lines 196-325)
 
 These use `toFinite` and `parseEpochMs` from runtime.ts (after Phase 1 migration).
 
@@ -143,14 +141,13 @@ import type { CostRow } from "./types.ts";
 export async function resolveOpencodeDbPath(
   deps: UsageDeps,
 ): Promise<{ path?: string; diagnostic?: string }> {
-  // ... exact existing implementation from lines 180-214
+  // ... exact existing implementation from lines 160-194
 }
 
 export async function collectSqliteRows(
   deps: UsageDeps,
 ): Promise<{ rows: CostRow[]; diagnostic?: string }> {
-  // ... exact existing implementation from lines 216-345
-  // toNumber → toFinite, parseTs → parseEpochMs (already done in Phase 1)
+  // ... exact existing implementation from lines 196-325
 }
 ```
 
@@ -177,10 +174,10 @@ refactor(opencode-go): extract sqlite-reader module
 
 Move these pure functions:
 
-- `utcMondayStart` (lines 354-363)
-- `anchoredMonthWindow` (lines 365-392)
-- `rolling5h` (lines 394-412)
-- `collectPiRows` (lines 347-352)
+- `utcMondayStart` (lines 334-343)
+- `anchoredMonthWindow` (lines 345-372)
+- `rolling5h` (lines 374-392)
+- `collectPiRows` (lines 327-332)
 
 ```typescript
 // src/providers/opencode-go/window-calculator.ts
@@ -203,14 +200,14 @@ export function anchoredMonthWindow(
   now: number,
   anchor: number,
 ): { start: number; end: number } {
-  // ... exact existing implementation from lines 365-392
+  // ... exact existing implementation from lines 345-372
 }
 
 export function rolling5h(
   rows: CostRow[],
   now: number,
 ): { used: number; resetAt: number } {
-  // ... exact existing implementation from lines 394-412
+  // ... exact existing implementation from lines 374-392
 }
 
 export async function collectPiRows(deps: UsageDeps): Promise<CostRow[]> {
@@ -278,13 +275,13 @@ export async function buildOpenCodeGoSnapshot(
   now: number,
   input?: { signal?: AbortSignal },
 ): Promise<ProviderUsageSnapshot> {
-  // ... exact existing implementation from lines 414-520
+  // ... exact existing implementation from lines 394-500
 }
 
 export function createOpenCodeGoProvider(
   deps: UsageDeps,
 ): UsageProviderAdapter {
-  // ... exact existing implementation from lines 522-558
+  // ... exact existing implementation from lines 502-538
 }
 ```
 
@@ -545,28 +542,21 @@ test(opencode-go): add unit tests for sqlite-reader
 pnpm check
 ```
 
-- [ ] **Step 2: Verify line count**
-
-```bash
-wc -l src/providers/opencode-go/index.ts
-# Must be <= 150
-```
-
-- [ ] **Step 3: Verify public exports**
+- [ ] **Step 2: Verify public exports**
 
 ```bash
 grep -n "export" src/providers/opencode-go/index.ts | grep -E "normalizeWorkspaceId|filterCookieHeader"
 # Both must be present
 ```
 
-- [ ] **Step 4: Verify existing tests pass**
+- [ ] **Step 3: Verify existing tests pass**
 
 ```bash
 pnpm vitest run tests/provider-opencode-go.test.ts
-# All 10 tests pass
+# All 9 tests pass
 ```
 
-- [ ] **Step 5: Verify module independence**
+- [ ] **Step 4: Verify module independence**
 
 ```bash
 # Each module should only import from types.ts, runtime.ts, shared/, or external deps:
@@ -580,7 +570,6 @@ grep "^import" src/providers/opencode-go/window-calculator.ts
 
 ## Exit Criteria
 
-- [ ] `src/providers/opencode-go/index.ts` <= 150 lines
 - [ ] Each internal module independently testable with own fixtures
 - [ ] Existing `tests/provider-opencode-go.test.ts` passes unchanged (except import path)
 - [ ] `normalizeWorkspaceId` and `filterCookieHeader` remain public re-exports
