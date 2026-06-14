@@ -5,7 +5,7 @@ import { createCommandCodeProvider } from "./command-code.ts";
 import { createMiniMaxProvider } from "./minimax.ts";
 import { createOfflineProvider } from "./offline.ts";
 import { createOpenAICodexProvider } from "./openai-codex.ts";
-import { createOpenCodeGoProvider } from "./opencode-go.ts";
+import { createOpenCodeGoProvider } from "./opencode-go/index.ts";
 import { createOpenRouterProvider } from "./openrouter.ts";
 import { createStepFunProvider } from "./stepfun.ts";
 

@@ -12,7 +12,7 @@ import {
   buildOpenCodeGoSnapshot,
   filterCookieHeader,
   normalizeWorkspaceId,
-} from "../src/providers/opencode-go.ts";
+} from "../src/providers/opencode-go/index.ts";
 import { createProviderRegistry } from "../src/providers/index.ts";
 
 function mkTmp(): string {
