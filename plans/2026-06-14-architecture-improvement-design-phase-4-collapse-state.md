@@ -6,7 +6,7 @@
 
 **Architecture:** Introduce an `InternalState` type (not exported) without derived fields. A pure `projectState(internal) → UsageCoreState` function computes all derived fields on demand. The `emit()` function calls `projectState` before cloning and emitting.
 
-**Tech Stack:** TypeScript 6, Vitest.
+**Tech Stack:** TypeScript, Vitest.
 
 **Depends on:** None (but Phase 5 benefits from this being done first)
 
@@ -29,15 +29,36 @@ The **exported** TypeScript type `UsageCoreState` in `src/shared/types.ts` **mus
 
 ## Current State Problem
 
-`syncCompatibility()` (index.ts lines 131-163) mutates 5 derived fields:
+`syncCompatibility()` (src/index.ts lines 131-163) mutates 5 derived fields:
 
 1. `state.currentProviderSnapshot` — found from `state.providers[]`
-2. `state.compatibility.currentLiveProviderId` — copy of `state.currentProviderId`
-3. `state.compatibility.currentLiveProviderSnapshot` — same as #1
-4. `state.provider` — the provider label string
-5. `state.usage` — `CurrentUsageCompatibility` with windows mapped to `RateWindow[]`
+2. `state.compatibility.currentLiveProviderId` — provider ID, but ONLY if it has valid "fiveHour" or "weekly" windows
+3. `state.compatibility.currentLiveProviderSnapshot` — the snapshot, but ONLY when #2 is set
+4. `state.provider` — the provider label string, ONLY when #2 is set
+5. `state.usage` — `CurrentUsageCompatibility` with windows filtered to "fiveHour"/"weekly" only
 
-It's called from 5 sites. A missed call = stale derived fields reaching consumers.
+It's called from 3 sites (lines 243, 277, 301). A missed call = stale derived fields reaching consumers.
+
+### Key Compatibility Logic
+
+The function does NOT simply mirror `currentProviderId` into `compatibility.currentLiveProviderId`. It applies a **filter gate**:
+
+```typescript
+const hasCompatibilityWindows = Boolean(
+  current?.windows.some(
+    (window) =>
+      (window.key === "fiveHour" || window.key === "weekly") &&
+      !window.unavailableReason,
+  ),
+);
+```
+
+Only if this passes are `compatibility.*`, `provider`, and `usage` populated. Otherwise they are `null`/`undefined`.
+
+Additionally, `usage.windows` maps `LiveUsageWindow[]` → `RateWindow[]` with:
+- Only "fiveHour"/"weekly" windows included
+- Only windows without `unavailableReason`
+- Mapped to `{ label, usedPercent }` (the `RateWindow` shape)
 
 ---
 
@@ -52,6 +73,7 @@ It's called from 5 sites. A missed call = stale derived fields reaching consumer
 ```typescript
 // src/core/state-projections.ts
 import type {
+  CurrentUsageCompatibility,
   ProviderId,
   ProviderUsageSnapshot,
   UsageCoreState,
@@ -61,7 +83,7 @@ import type {
  * Internal state shape — source-of-truth fields only.
  * Not exported from the package.
  */
-export type InternalState = {
+export interface InternalState {
   refreshRequested: boolean;
   generatedAt: number;
   loading: boolean;
@@ -71,52 +93,72 @@ export type InternalState = {
   currentModelLabel?: string;
   providers: ProviderUsageSnapshot[];
   diagnostics: string[];
-};
+}
 
 /**
  * Compute the full UsageCoreState (with all derived fields) from internal state.
  * Pure function — no side effects.
+ *
+ * Replicates the logic of the former syncCompatibility() function:
+ * - currentProviderSnapshot: lookup from providers[]
+ * - compatibility.currentLiveProviderId: only set if provider has valid
+ *   "fiveHour" or "weekly" windows without unavailableReason
+ * - compatibility.currentLiveProviderSnapshot: only set when above is set
+ * - provider: label string, only when compatibility is set
+ * - usage: CurrentUsageCompatibility with filtered windows, only when compatibility is set
  */
 export function projectState(state: InternalState): UsageCoreState {
-  const snapshot = state.currentProviderId
-    ? (state.providers.find((p) => p.providerId === state.currentProviderId) ??
-      null)
-    : null;
+  const currentSnapshot =
+    state.providers.find((p) => p.providerId === state.currentProviderId) ??
+    null;
+
+  const hasCompatibilityWindows = Boolean(
+    currentSnapshot?.windows.some(
+      (w) =>
+        (w.key === "fiveHour" || w.key === "weekly") && !w.unavailableReason,
+    ),
+  );
+
+  const compatProviderId =
+    hasCompatibilityWindows && currentSnapshot
+      ? currentSnapshot.providerId
+      : null;
+
+  const compatSnapshot = compatProviderId ? currentSnapshot : null;
 
   return {
-    ...state,
-    currentProviderSnapshot: snapshot,
-    provider: snapshot?.providerLabel,
-    usage: snapshot ? buildUsageCompat(snapshot) : undefined,
+    refreshRequested: state.refreshRequested,
+    generatedAt: state.generatedAt,
+    loading: state.loading,
+    offline: state.offline,
+    insights: state.insights,
+    currentProviderId: state.currentProviderId,
+    currentModelLabel: state.currentModelLabel,
+    currentProviderSnapshot: currentSnapshot,
+    providers: state.providers,
+    diagnostics: state.diagnostics,
+    provider: compatSnapshot ? compatSnapshot.providerLabel : undefined,
+    usage: compatSnapshot ? buildUsageCompat(compatSnapshot) : undefined,
     compatibility: {
-      currentLiveProviderId: state.currentProviderId,
-      currentLiveProviderSnapshot: snapshot,
+      currentLiveProviderId: compatProviderId,
+      currentLiveProviderSnapshot: compatSnapshot,
     },
   };
 }
 
 function buildUsageCompat(
   snapshot: ProviderUsageSnapshot,
-): UsageCoreState["usage"] {
+): CurrentUsageCompatibility {
   return {
     provider: snapshot.providerId,
     displayName: snapshot.providerLabel,
-    windows: snapshot.windows.map((w) => ({
-      key: w.key,
-      label: w.label,
-      usedPercent: w.usedPercent,
-      used: w.used,
-      limit: w.limit,
-      unit: w.unit,
-      resetAt: w.resetAt,
-      windowDurationMins: w.windowDurationMins,
-      unavailableReason: w.unavailableReason,
-    })),
+    windows: snapshot.windows
+      .filter((w) => w.key === "fiveHour" || w.key === "weekly")
+      .filter((w) => !w.unavailableReason)
+      .map((w) => ({ label: w.label, usedPercent: w.usedPercent })),
   };
 }
 ```
-
-Note: The exact shape of `buildUsageCompat` must match what `syncCompatibility()` currently produces. Read `syncCompatibility()` (index.ts lines 131-163) to verify the field mapping before implementing.
 
 - [ ] **Step 2: Verify compiles**
 
@@ -207,39 +249,19 @@ describe("projectState", () => {
     );
     expect(result.currentProviderSnapshot).toBeNull();
     expect(result.compatibility.currentLiveProviderSnapshot).toBeNull();
+    expect(result.provider).toBeUndefined();
+    expect(result.usage).toBeUndefined();
   });
 
-  it("returns correct snapshot when provider matches", () => {
-    const snapshot = makeSnapshot({ providerId: "openai-codex" });
-    const result = projectState(
-      makeInternalState({
-        currentProviderId: "openai-codex",
-        providers: [snapshot, makeSnapshot({ providerId: "minimax" })],
-      }),
-    );
-    expect(result.currentProviderSnapshot).toEqual(snapshot);
-    expect(result.provider).toBe("OpenAI/Codex");
-    expect(result.compatibility.currentLiveProviderId).toBe("openai-codex");
-    expect(result.compatibility.currentLiveProviderSnapshot).toEqual(snapshot);
-  });
-
-  it("builds usage compatibility with windows", () => {
+  it("returns currentProviderSnapshot but NOT compatibility when no valid compat windows", () => {
     const snapshot = makeSnapshot({
       providerId: "openai-codex",
       windows: [
+        { key: "daily", label: "Daily", usedPercent: 50 },
         {
-          key: "primary",
-          label: "Primary",
-          usedPercent: 42,
-          used: 420,
-          limit: 1000,
-          unit: "requests",
-          resetAt: 99999,
-        },
-        {
-          key: "secondary",
-          label: "Secondary",
-          usedPercent: 10,
+          key: "fiveHour",
+          label: "5h",
+          usedPercent: 20,
           unavailableReason: "Rate limit exceeded",
         },
       ],
@@ -250,18 +272,86 @@ describe("projectState", () => {
         providers: [snapshot],
       }),
     );
+    // currentProviderSnapshot is always set when provider matches
+    expect(result.currentProviderSnapshot).toEqual(snapshot);
+    // but compatibility gate fails: no valid fiveHour/weekly without unavailableReason
+    expect(result.compatibility.currentLiveProviderId).toBeNull();
+    expect(result.compatibility.currentLiveProviderSnapshot).toBeNull();
+    expect(result.provider).toBeUndefined();
+    expect(result.usage).toBeUndefined();
+  });
+
+  it("populates compatibility when provider has valid fiveHour window", () => {
+    const snapshot = makeSnapshot({
+      providerId: "openai-codex",
+      windows: [
+        { key: "fiveHour", label: "5-hour", usedPercent: 42 },
+        { key: "daily", label: "Daily", usedPercent: 10 },
+      ],
+    });
+    const result = projectState(
+      makeInternalState({
+        currentProviderId: "openai-codex",
+        providers: [snapshot],
+      }),
+    );
+    expect(result.currentProviderSnapshot).toEqual(snapshot);
+    expect(result.compatibility.currentLiveProviderId).toBe("openai-codex");
+    expect(result.compatibility.currentLiveProviderSnapshot).toEqual(snapshot);
+    expect(result.provider).toBe("OpenAI/Codex");
     expect(result.usage).toBeDefined();
     expect(result.usage!.provider).toBe("openai-codex");
     expect(result.usage!.displayName).toBe("OpenAI/Codex");
-    expect(result.usage!.windows).toHaveLength(2);
-    expect(result.usage!.windows[0].key).toBe("primary");
-    expect(result.usage!.windows[0].usedPercent).toBe(42);
-    expect(result.usage!.windows[1].unavailableReason).toBe(
-      "Rate limit exceeded",
-    );
+    // Only fiveHour window (daily excluded from usage.windows)
+    expect(result.usage!.windows).toHaveLength(1);
+    expect(result.usage!.windows[0]).toEqual({ label: "5-hour", usedPercent: 42 });
   });
 
-  it("handles provider with empty windows", () => {
+  it("populates compatibility when provider has valid weekly window", () => {
+    const snapshot = makeSnapshot({
+      providerId: "minimax",
+      providerLabel: "MiniMax",
+      windows: [{ key: "weekly", label: "Weekly", usedPercent: 75 }],
+    });
+    const result = projectState(
+      makeInternalState({
+        currentProviderId: "minimax",
+        providers: [snapshot],
+      }),
+    );
+    expect(result.compatibility.currentLiveProviderId).toBe("minimax");
+    expect(result.provider).toBe("MiniMax");
+    expect(result.usage!.windows).toHaveLength(1);
+    expect(result.usage!.windows[0]).toEqual({ label: "Weekly", usedPercent: 75 });
+  });
+
+  it("filters unavailable windows from usage.windows", () => {
+    const snapshot = makeSnapshot({
+      providerId: "openai-codex",
+      windows: [
+        { key: "fiveHour", label: "5h", usedPercent: 30 },
+        {
+          key: "weekly",
+          label: "Weekly",
+          usedPercent: 0,
+          unavailableReason: "No data",
+        },
+      ],
+    });
+    const result = projectState(
+      makeInternalState({
+        currentProviderId: "openai-codex",
+        providers: [snapshot],
+      }),
+    );
+    // Gate passes because fiveHour is valid
+    expect(result.compatibility.currentLiveProviderId).toBe("openai-codex");
+    // usage.windows only includes the fiveHour (weekly filtered out due to unavailableReason)
+    expect(result.usage!.windows).toHaveLength(1);
+    expect(result.usage!.windows[0]).toEqual({ label: "5h", usedPercent: 30 });
+  });
+
+  it("handles provider with empty windows (gate fails)", () => {
     const snapshot = makeSnapshot({ windows: [] });
     const result = projectState(
       makeInternalState({
@@ -269,7 +359,11 @@ describe("projectState", () => {
         providers: [snapshot],
       }),
     );
-    expect(result.usage!.windows).toEqual([]);
+    expect(result.currentProviderSnapshot).toEqual(snapshot);
+    // No valid compat windows → gate fails
+    expect(result.compatibility.currentLiveProviderId).toBeNull();
+    expect(result.provider).toBeUndefined();
+    expect(result.usage).toBeUndefined();
   });
 
   it("preserves all source-of-truth fields", () => {
@@ -277,13 +371,29 @@ describe("projectState", () => {
       refreshRequested: true,
       generatedAt: 12345,
       loading: true,
+      currentModelLabel: "codex-mini-latest",
       diagnostics: ["test diagnostic"],
     });
     const result = projectState(state);
     expect(result.refreshRequested).toBe(true);
     expect(result.generatedAt).toBe(12345);
     expect(result.loading).toBe(true);
+    expect(result.currentModelLabel).toBe("codex-mini-latest");
     expect(result.diagnostics).toEqual(["test diagnostic"]);
+  });
+
+  it("selects correct provider from multiple providers", () => {
+    const codex = makeSnapshot({ providerId: "openai-codex", windows: [{ key: "fiveHour", label: "5h", usedPercent: 10 }] });
+    const minimax = makeSnapshot({ providerId: "minimax", providerLabel: "MiniMax", windows: [{ key: "weekly", label: "Weekly", usedPercent: 90 }] });
+    const result = projectState(
+      makeInternalState({
+        currentProviderId: "minimax",
+        providers: [codex, minimax],
+      }),
+    );
+    expect(result.currentProviderSnapshot).toEqual(minimax);
+    expect(result.compatibility.currentLiveProviderId).toBe("minimax");
+    expect(result.provider).toBe("MiniMax");
   });
 });
 ```
@@ -307,23 +417,17 @@ test(core): add unit tests for state projection
 
 - Modify: `src/index.ts`
 
-- [ ] **Step 1: Import projectState**
+- [ ] **Step 1: Import projectState and InternalState**
+
+Add to the imports at the top of `src/index.ts`:
 
 ```typescript
 import { projectState, type InternalState } from "./core/state-projections.ts";
 ```
 
-- [ ] **Step 2: Change state variable type**
+- [ ] **Step 2: Change `createInitialState()` return type and remove derived fields**
 
-```typescript
-// Before:
-const state: UsageCoreState = createInitialState();
-
-// After:
-const state: InternalState = createInitialState();
-```
-
-Update `createInitialState()` to return `InternalState` (remove derived fields from initial value):
+Replace the existing `createInitialState()` function (lines 34-56) with:
 
 ```typescript
 function createInitialState(): InternalState {
@@ -346,42 +450,53 @@ function createInitialState(): InternalState {
 }
 ```
 
-- [ ] **Step 3: Update emit() to project state**
+- [ ] **Step 3: Delete the `cloneState` helper**
+
+Remove this function (lines 88-90):
+```typescript
+function cloneState(state: UsageCoreState): UsageCoreState {
+  return JSON.parse(JSON.stringify(state)) as UsageCoreState;
+}
+```
+
+- [ ] **Step 4: Update `emit()` to project and clone**
+
+Replace the existing `emit` function (lines 120-123) with:
 
 ```typescript
-// Before:
 const emit = (name: string) => {
-  const payload: UsageCorePayload = { state: cloneState(state) };
-  pi.events.emit(name, payload);
-};
-
-// After:
-const emit = (name: string) => {
-  const projected = projectState(state);
-  const payload: UsageCorePayload = { state: structuredClone(projected) };
+  const payload: UsageCorePayload = {
+    state: structuredClone(projectState(state)),
+  };
   pi.events.emit(name, payload);
 };
 ```
 
-- [ ] **Step 4: Update request handler**
+- [ ] **Step 5: Update request handler**
 
+Replace (line 333):
 ```typescript
-// Before:
 payload.reply({ state: cloneState(state) });
+```
 
-// After:
+With:
+```typescript
 payload.reply({ state: structuredClone(projectState(state)) });
 ```
 
-- [ ] **Step 5: Verify compiles (will have errors from syncCompatibility calls)**
+- [ ] **Step 6: Remove unused `UsageCoreState` import if no longer needed**
+
+After removing `cloneState`, the `UsageCoreState` import from `"./shared/types.ts"` (line 12) may only be used indirectly via `InternalState`. Check if it's still needed (it is still used via `UsageCorePayload` in events.ts, so it likely can be removed from the direct import in index.ts). Let the type checker guide you — remove if unused.
+
+- [ ] **Step 7: Verify — expect type errors from syncCompatibility**
 
 Run: `pnpm typecheck`
-Expected: Errors about `state.currentProviderSnapshot` etc. (fixed in Task 4)
+Expected: Errors about `syncCompatibility` trying to assign derived fields to `InternalState`. This is correct — we fix it in Task 4.
 
-- [ ] **Step 6: Commit** (WIP — will fix in next task)
+- [ ] **Step 8: Commit (WIP)**
 
 ```
-refactor(index): wire projectState into emit and request handler
+refactor(index): wire projectState into emit and request handler [WIP]
 ```
 
 ---
@@ -392,45 +507,46 @@ refactor(index): wire projectState into emit and request handler
 
 - Modify: `src/index.ts`
 
-- [ ] **Step 1: Delete the function**
+- [ ] **Step 1: Delete the `syncCompatibility` function**
 
-Remove the entire `syncCompatibility()` function (lines ~131-163).
+Remove the entire function body (lines 131-163):
+```typescript
+const syncCompatibility = () => {
+  // ... entire function ...
+};
+```
 
-- [ ] **Step 2: Remove all call sites**
+- [ ] **Step 2: Remove all 3 call sites**
 
-Search for `syncCompatibility()` in index.ts and delete each call. There are 5 sites:
+1. Line 243 — inside `populateProviders` `.then()` callback:
+   ```typescript
+   // Remove: syncCompatibility();
+   // Keep: state.providers = snapshots; applyCommandCodeLocalFallback();
+   ```
 
-1. After `populateProviders()` completes
-2. After `applyCommandCodeLocalFallback()`
-3. After `updateModelContext()` changes `currentProviderId`
-4. After loading state from cache on bootstrap
-5. After any provider snapshot update
+2. Line 277 — inside `refreshOffline`:
+   ```typescript
+   // Remove: syncCompatibility();
+   // Keep: applyCommandCodeLocalFallback();
+   ```
 
-- [ ] **Step 3: Remove direct mutations to derived fields**
+3. Line 301 — inside `updateModelContext`:
+   ```typescript
+   // Remove: syncCompatibility();
+   // Keep: state.currentProviderId = ...; state.currentModelLabel = ...;
+   ```
 
-Delete any lines that directly set:
+- [ ] **Step 3: Verify compiles**
 
-- `state.currentProviderSnapshot = ...`
-- `state.compatibility.currentLiveProviderId = ...`
-- `state.compatibility.currentLiveProviderSnapshot = ...`
-- `state.provider = ...`
-- `state.usage = ...`
+Run: `pnpm typecheck`
+Expected: PASS — `InternalState` has no derived fields, so no assignment errors remain.
 
-These no longer exist on `InternalState`.
-
-- [ ] **Step 4: Fix remaining type errors**
-
-Any code that reads derived fields from `state` must be changed to either:
-
-- Call `projectState(state)` if it needs the full projected view
-- Or access source-of-truth fields directly (e.g., `state.currentProviderId`)
-
-- [ ] **Step 5: Verify compiles and tests pass**
+- [ ] **Step 4: Run full check**
 
 Run: `pnpm check`
-Expected: PASS — all 11 test files green
+Expected: PASS — all test files green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```
 refactor(index): delete syncCompatibility and all derived state mutations
@@ -441,31 +557,104 @@ Eliminates missed-call bug surface entirely.
 
 ---
 
-### Task 5: Verify event payload shape is identical
+### Task 5: Add regression tests for derived field emission
+
+The existing `tests/index.test.ts` has **no assertions** on `state.compatibility`, `state.provider`, or `state.usage`. We need regression coverage to ensure the projection produces the correct emitted shape.
+
+**Files:**
+
+- Modify: `tests/index.test.ts`
+
+- [ ] **Step 1: Identify the test setup pattern**
+
+Read the existing test file's helper setup (how it creates a mock `pi` object, triggers `session_start`, etc.) and the provider mock data. The new test will follow the same patterns.
+
+- [ ] **Step 2: Add a test that verifies emitted compatibility fields**
+
+Add a new test case in the "usage extension" describe block. The test should:
+
+1. Set up a provider mock that returns a snapshot with "fiveHour" and "weekly" windows
+2. Trigger bootstrap / session_start
+3. Capture the emitted payload
+4. Assert on:
+   - `state.currentProviderSnapshot` matches the expected snapshot
+   - `state.compatibility.currentLiveProviderId` equals the provider ID
+   - `state.compatibility.currentLiveProviderSnapshot` equals the snapshot
+   - `state.provider` equals the provider label
+   - `state.usage.provider` equals the provider ID
+   - `state.usage.displayName` equals the provider label
+   - `state.usage.windows` is the filtered/mapped array (RateWindow shape: `{ label, usedPercent }`)
+
+Follow the existing test patterns in the file for mock setup. The exact code depends on what helpers already exist in the test file — adapt accordingly.
+
+- [ ] **Step 3: Add a test for the gate-fails case**
+
+Add another test where the provider has NO "fiveHour"/"weekly" windows (e.g., only "daily"). Assert:
+- `state.currentProviderSnapshot` is still populated (lookup always works)
+- `state.compatibility.currentLiveProviderId` is `null`
+- `state.compatibility.currentLiveProviderSnapshot` is `null`
+- `state.provider` is `undefined`
+- `state.usage` is `undefined`
+
+- [ ] **Step 4: Run tests**
+
+Run: `pnpm check`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```
+test(index): add regression coverage for derived compatibility fields
+```
+
+---
+
+### Task 6: Final verification
 
 **Files:** None (verification only)
 
-- [ ] **Step 1: Run full test suite**
+- [ ] **Step 1: Run full check**
 
 ```bash
 pnpm check
 ```
 
-The existing tests in `tests/index.test.ts` assert on emitted event payloads including `state.compatibility.currentLiveProviderSnapshot`. If these pass, the payload shape is preserved.
+Expected: PASS (biome lint + tsc --noEmit + vitest run)
 
 - [ ] **Step 2: Grep for any remaining syncCompatibility references**
 
 ```bash
 grep -rn "syncCompatibility" src/ tests/
-# Expected: 0 results
 ```
+
+Expected: 0 results
 
 - [ ] **Step 3: Verify no derived field mutations remain**
 
 ```bash
 grep -n "state\.currentProviderSnapshot\|state\.compatibility\.\|state\.provider\s*=\|state\.usage\s*=" src/index.ts
-# Expected: 0 results (these fields no longer exist on InternalState)
 ```
+
+Expected: 0 results (these fields no longer exist on `InternalState`)
+
+- [ ] **Step 4: Verify all emissions go through projectState**
+
+```bash
+grep -n "pi\.events\.emit\|payload\.reply" src/index.ts
+```
+
+Expected: Only 2 matches — the `emit()` helper body and the `payload.reply` call, both of which call `projectState`.
+
+- [ ] **Step 5: Squash the WIP commit from Task 3**
+
+Squash the Task 3 WIP commit into the Task 4 commit (they're logically one atomic change):
+
+```bash
+git rebase -i HEAD~3
+# Mark the Task 3 commit as "fixup" into the Task 4 commit
+```
+
+Alternatively, if the agent doesn't support interactive rebase, this can be skipped — the commits are still correct individually.
 
 ---
 
@@ -475,14 +664,16 @@ grep -n "state\.currentProviderSnapshot\|state\.compatibility\.\|state\.provider
 - [ ] No direct mutations to derived fields in index.ts
 - [ ] Derived fields computed only at emission time via `projectState()`
 - [ ] `projectState` is pure (no side effects, tested independently)
-- [ ] Event payload shape unchanged (verified by existing `tests/index.test.ts`)
+- [ ] Event payload shape unchanged — verified by new regression tests in Task 5
 - [ ] Exported `UsageCoreState` type in `src/shared/types.ts` unchanged
 - [ ] `pnpm check` passes
 
 ## Risk Mitigation
 
-| Risk                                                | Mitigation                                                                 |
-| --------------------------------------------------- | -------------------------------------------------------------------------- |
-| Missed emission site that bypasses `projectState`   | Grep for all `pi.events.emit` calls; ensure all go through `emit()` helper |
-| Performance of `providers.find()` on each emit      | Providers array is small (2-6 items); negligible cost                      |
-| `buildUsageCompat` doesn't match old output exactly | Diff test output before/after; existing tests catch any mismatch           |
+| Risk | Mitigation |
+| --- | --- |
+| Projection doesn't match old `syncCompatibility` logic | Task 2 tests cover the compatibility gate explicitly; Task 5 adds integration-level regression tests |
+| Missed emission site that bypasses `projectState` | Task 6 step 4 greps for all `pi.events.emit` / `payload.reply` calls |
+| Performance of `providers.find()` on each emit | Providers array is small (2-6 items); negligible cost |
+| No existing tests cover `compatibility` fields | Task 5 adds dedicated regression tests before claiming done |
+| `structuredClone` vs `JSON.parse(JSON.stringify())` semantics | Both produce deep clones of plain objects. `structuredClone` is strictly better (handles `undefined` fields, no prototype issues). State contains only JSON-safe primitives, arrays, and plain objects. |
