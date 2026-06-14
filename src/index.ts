@@ -13,8 +13,11 @@ import {
   type UsageCoreCurrentRequest,
   type UsageCorePayload,
 } from "./shared/events.ts";
+import { detectProviderFromModel } from "./shared/provider-detection.ts";
 import { buildPeriods } from "./tui/dashboard-model.ts";
 import { openDashboard } from "./tui/dashboard.ts";
+
+export { detectProviderFromModel } from "./shared/provider-detection.ts";
 
 const GLOBAL_KEY = "__piUsage" as const;
 
@@ -53,35 +56,7 @@ function createInitialState(): InternalState {
   };
 }
 
-export function detectProviderFromModel(
-  model: { provider?: string; id?: string; name?: string } | undefined,
-):
-  | "openai-codex"
-  | "minimax"
-  | "stepfun"
-  | "opencode-go"
-  | "command-code"
-  | "openrouter"
-  | undefined {
-  if (!model) return undefined;
-  const p = (model.provider ?? "").trim().toLowerCase();
-  if (p === "openai-codex") return "openai-codex";
-  if (p === "minimax") return "minimax";
-  if (p === "stepfun") return "stepfun";
-  if (p === "opencode-go") return "opencode-go";
-  if (p === "command-code" || p === "commandcode") return "command-code";
-  if (p === "openrouter") return "openrouter";
-  if (p) return undefined;
-  const n = (model.id ?? model.name ?? "").toLowerCase();
-  if (n.includes("codex")) return "openai-codex";
-  if (n.includes("minimax")) return "minimax";
-  if (n.includes("stepfun")) return "stepfun";
-  if (n.includes("opencode-go")) return "opencode-go";
-  if (n.includes("command-code") || n.includes("commandcode")) {
-    return "command-code";
-  }
-  return undefined;
-}
+
 
 function isCurrentRequest(value: unknown): value is UsageCoreCurrentRequest {
   return (
