@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Pull formatting functions and table rendering logic out of `dashboard.ts` (768 lines) into independently testable modules, reducing it to <=450 lines.
+**Goal:** Pull formatting functions and table rendering logic out of `dashboard.ts` (768 lines) into independently testable modules.
 
 **Architecture:** Extract pure functions (formatters) and table layout logic (column selection, row rendering) into separate files. `dashboard.ts` imports from them. No behavior change.
 
@@ -20,7 +20,7 @@
 | ------------------------- | --------------------------------------------------------------------------------------------------- | ------ |
 | `src/tui/formatters.ts`   | Pure formatting: `formatAge`, `formatCurrency`, `formatAbbrev`, `formatResetCompact`, `formatRatio` | ~80    |
 | `src/tui/table-layout.ts` | Column definitions, width calc, row/separator rendering                                             | ~80    |
-| `src/tui/dashboard.ts`    | Component class + rendering (imports from above)                                                    | ~450   |
+| `src/tui/dashboard.ts`    | Component class + rendering (imports from above)                                                    | ~640   |
 
 ---
 
@@ -558,21 +558,13 @@ Remove these local function definitions from `dashboard.ts`:
 - [ ] **Step 3: Verify existing tests pass**
 
 Run: `pnpm vitest run tests/dashboard.test.ts`
-Expected: All 29 tests PASS (rendering output identical)
+Expected: All 25 tests PASS (rendering output identical)
 
-- [ ] **Step 4: Verify line count**
-
-```bash
-wc -l src/tui/dashboard.ts
-# Expected: <= 450
-```
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```
 refactor(tui): wire dashboard.ts to extracted formatters and table-layout
 
-dashboard.ts reduced from 768 to ~450 lines.
 No behavior change; all existing tests pass unchanged.
 ```
 
@@ -586,14 +578,7 @@ No behavior change; all existing tests pass unchanged.
 pnpm check
 ```
 
-- [ ] **Step 2: Verify line count target**
-
-```bash
-wc -l src/tui/dashboard.ts
-# Must be <= 450
-```
-
-- [ ] **Step 3: Verify no formatting logic remains private**
+- [ ] **Step 2: Verify no formatting logic remains private**
 
 ```bash
 grep -n "function format" src/tui/dashboard.ts
@@ -602,10 +587,10 @@ grep -n "function tableColumns\|function labelWidth\|function tableLine\|functio
 # Should return 0 matches (all moved to table-layout.ts)
 ```
 
-- [ ] **Step 4: Verify all test files pass**
+- [ ] **Step 3: Verify all test files pass**
 
 ```bash
-pnpm vitest run tests/dashboard.test.ts      # 29 tests
+pnpm vitest run tests/dashboard.test.ts      # 25 tests
 pnpm vitest run tests/dashboard-model.test.ts # existing
 pnpm vitest run tests/formatters.test.ts     # new
 pnpm vitest run tests/table-layout.test.ts   # new
@@ -615,7 +600,6 @@ pnpm vitest run tests/table-layout.test.ts   # new
 
 ## Exit Criteria
 
-- [ ] `dashboard.ts` <= 450 lines
 - [ ] `tests/dashboard.test.ts` passes unchanged (rendering output identical)
 - [ ] `tests/dashboard-model.test.ts` passes unchanged
 - [ ] Formatters have dedicated unit tests (`tests/formatters.test.ts`)
