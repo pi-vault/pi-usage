@@ -4,7 +4,7 @@
 
 **Goal:** Extract state management and orchestration from the extension entry point into a testable `UsageCore` module. `index.ts` becomes a thin adapter mapping Pi hooks to core calls (~80-100 lines).
 
-**Architecture:** `createUsageCore()` owns all state, timers, watchers, and provider orchestration. It accepts `UsageDeps` and an `onStateChange` callback. `index.ts` creates a core instance and maps Pi lifecycle events to core method calls.
+**Architecture:** `createUsageCore()` owns all state, timers, watchers, provider lifecycle, and the `providerRefresh` mutex. It accepts `UsageDeps` and an `onEmit` callback for event forwarding. `index.ts` creates a core instance and maps Pi lifecycle events (`session_start`, `model_select`, `turn_start`, `turn_end`, `session_shutdown`) to core method calls, registers commands, and wires the request/reply event handler.
 
 **Tech Stack:** TypeScript 6, Vitest.
 
@@ -16,11 +16,23 @@
 
 ## File Structure
 
-| File                        | Responsibility               | ~Lines  |
-| --------------------------- | ---------------------------- | ------- |
-| `src/shared/concurrency.ts` | `mapWithLimit` utility       | ~25     |
-| `src/core/usage-core.ts`    | State + orchestration module | ~250    |
-| `src/index.ts`              | Thin Pi adapter              | ~80-100 |
+| File | Responsibility | ~Lines |
+| --- | --- | --- |
+| `src/shared/concurrency.ts` | `mapWithLimit` utility | ~25 |
+| `src/shared/provider-detection.ts` | `detectProviderFromModel` pure function | ~35 |
+| `src/core/usage-core.ts` | State + orchestration module | ~280 |
+| `src/index.ts` | Thin Pi adapter | ~80-100 |
+
+---
+
+## Key Design Decisions
+
+1. **Provider registry created once** at core construction, reused across all `populateProviders` calls (adapters are stateful with internal cache).
+2. **`detectProviderFromModel`** extracted to `src/shared/provider-detection.ts` and re-exported from `index.ts` for backward compatibility (consumed by `tests/provider-registry.test.ts`).
+3. **`onEmit(eventName, payload)` callback** — core creates the structuredClone payload; adapter just forwards to `pi.events.emit`.
+4. **`providerRefresh` mutex** — the queue-if-busy pattern is preserved exactly (prevents duplicate parallel fetches).
+5. **`ScanToken`** — per-scan cancellation tokens stay as-is; no module-level `shutdownRequested` flag.
+6. **`dashboardBus` / `__piUsageBus`** — stays in index.ts (Pi-specific adapter concern).
 
 ---
 
@@ -33,8 +45,9 @@
 
 - [ ] **Step 1: Write the failing test**
 
+Create `tests/concurrency.test.ts`:
+
 ```typescript
-// tests/concurrency.test.ts
 import { describe, expect, it } from "vitest";
 import { mapWithLimit } from "../src/shared/concurrency.ts";
 
@@ -85,9 +98,9 @@ Expected: FAIL (module not found)
 
 - [ ] **Step 3: Write implementation**
 
-```typescript
-// src/shared/concurrency.ts
+Create `src/shared/concurrency.ts`:
 
+```typescript
 /**
  * Map items through an async function with bounded concurrency.
  * Workers pull from a shared queue — at most `limit` run simultaneously.
@@ -129,7 +142,95 @@ feat(shared): extract mapWithLimit concurrency utility
 
 ---
 
-### Task 2: Create `src/core/usage-core.ts` with interface and skeleton
+### Task 2: Extract `detectProviderFromModel` to `src/shared/provider-detection.ts`
+
+**Files:**
+
+- Create: `src/shared/provider-detection.ts`
+- Modify: `src/index.ts` (replace function body with re-export)
+- Verify: `tests/provider-registry.test.ts` still passes (imports from `../src/index.ts`)
+
+- [ ] **Step 1: Create `src/shared/provider-detection.ts`**
+
+Copy the function verbatim from `src/index.ts` lines 56-84:
+
+```typescript
+export function detectProviderFromModel(
+  model: { provider?: string; id?: string; name?: string } | undefined,
+):
+  | "openai-codex"
+  | "minimax"
+  | "stepfun"
+  | "opencode-go"
+  | "command-code"
+  | "openrouter"
+  | undefined {
+  if (!model) return undefined;
+  const p = (model.provider ?? "").trim().toLowerCase();
+  if (p === "openai-codex") return "openai-codex";
+  if (p === "minimax") return "minimax";
+  if (p === "stepfun") return "stepfun";
+  if (p === "opencode-go") return "opencode-go";
+  if (p === "command-code" || p === "commandcode") return "command-code";
+  if (p === "openrouter") return "openrouter";
+  if (p) return undefined;
+  const n = (model.id ?? model.name ?? "").toLowerCase();
+  if (n.includes("codex")) return "openai-codex";
+  if (n.includes("minimax")) return "minimax";
+  if (n.includes("stepfun")) return "stepfun";
+  if (n.includes("opencode-go")) return "opencode-go";
+  if (n.includes("command-code") || n.includes("commandcode")) {
+    return "command-code";
+  }
+  return undefined;
+}
+```
+
+- [ ] **Step 2: Update `src/index.ts`**
+
+Replace the `detectProviderFromModel` function definition (lines 56-84) with a re-export:
+
+```typescript
+export { detectProviderFromModel } from "./shared/provider-detection.ts";
+```
+
+Update internal usage (line 259) to import from the shared module instead (or use the re-exported name — since it's in the same file scope via re-export, just add the import at the top):
+
+```typescript
+import { detectProviderFromModel } from "./shared/provider-detection.ts";
+```
+
+And remove the `export` from the re-export line since we now import it. Actually, keep it simple: just re-export it so the public API doesn't change, and import it separately for internal use:
+
+At top of `src/index.ts`, add:
+```typescript
+import { detectProviderFromModel } from "./shared/provider-detection.ts";
+```
+
+Replace the function definition with:
+```typescript
+export { detectProviderFromModel } from "./shared/provider-detection.ts";
+```
+
+- [ ] **Step 3: Verify tests pass**
+
+Run: `pnpm vitest run tests/provider-registry.test.ts`
+Expected: PASS (import from `../src/index.ts` still works via re-export)
+
+- [ ] **Step 4: Run full check**
+
+Run: `pnpm check`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```
+refactor(shared): extract detectProviderFromModel to dedicated module
+```
+
+---
+
+### Task 3: Create `src/core/usage-core.ts` — interface and factory skeleton
 
 **Files:**
 
@@ -138,33 +239,65 @@ feat(shared): extract mapWithLimit concurrency utility
 - [ ] **Step 1: Define interface and factory**
 
 ```typescript
-// src/core/usage-core.ts
 import type { UsageDeps } from "../shared/deps.ts";
-import type { UsageCoreState } from "../shared/types.ts";
-import { type InternalState, projectState } from "./state-projections.ts";
+import type {
+  ProviderId,
+  ProviderUsageSnapshot,
+  UsageCoreState,
+  UsageProviderAdapter,
+} from "../shared/types.ts";
+import type { UsageCorePayload } from "../shared/events.ts";
+import {
+  type InternalState,
+  projectState,
+} from "./state-projections.ts";
+import { createProviderRegistry, providerCacheDir } from "../providers/index.ts";
+import { detectProviderFromModel } from "../shared/provider-detection.ts";
+import { mapWithLimit } from "../shared/concurrency.ts";
+import { buildInsights, scanOfflineUsage } from "./offline.ts";
+import { buildPeriods } from "../tui/dashboard-model.ts";
+
+export type ScanToken = { cancelled: boolean };
 
 export interface UsageCoreOptions {
   deps: UsageDeps;
-  onStateChange: (state: UsageCoreState) => void;
+  onEmit: (eventName: string, payload: UsageCorePayload) => void;
 }
 
 export interface UsageCore {
   bootstrap(): Promise<void>;
-  refresh(force?: boolean, signal?: AbortSignal): Promise<void>;
-  refreshOffline(force?: boolean): Promise<void>;
+  populateProviders(force?: boolean, signal?: AbortSignal): Promise<void>;
+  refreshOffline(refresh: boolean, token?: ScanToken): Promise<void>;
+  prepareUsageDashboard(refresh: boolean): Promise<{
+    cancelScan: () => void;
+    scan: Promise<void> | undefined;
+  }>;
   updateModel(
     model: { provider?: string; id?: string; name?: string } | undefined,
   ): void;
+  emitProviderUpdate(force?: boolean, signal?: AbortSignal): Promise<void>;
   getState(): UsageCoreState;
-  startLivePolling(): void;
+  isLiveProvider(id: ProviderId | null): boolean;
+  startLiveRuntime(): void;
   shutdown(): void;
 }
 
 export function createUsageCore(options: UsageCoreOptions): UsageCore {
-  const { deps, onStateChange } = options;
+  const { deps, onEmit } = options;
+
+  // --- Provider registry (created once, reused) ---
+  const providers = createProviderRegistry(deps);
+  const liveProviderIds = new Set(
+    providers
+      .filter((p) => p.strategy === "api")
+      .map((p) => p.id),
+  );
+  const liveProviderSnapshotFiles = new Set(
+    [...liveProviderIds].map((id) => `${id}.json`),
+  );
 
   // --- State ---
-  let state: InternalState = {
+  const state: InternalState = {
     refreshRequested: false,
     generatedAt: 0,
     loading: false,
@@ -181,46 +314,46 @@ export function createUsageCore(options: UsageCoreOptions): UsageCore {
     diagnostics: [],
   };
 
+  // --- Helpers ---
+  function emit(eventName: string): void {
+    onEmit(eventName, { state: structuredClone(projectState(state)) });
+  }
+
   function getState(): UsageCoreState {
     return structuredClone(projectState(state));
   }
 
-  function emit(): void {
-    onStateChange(getState());
+  function isLiveProvider(id: ProviderId | null): boolean {
+    return id !== null && liveProviderIds.has(id);
   }
 
-  // Methods stubbed — filled in subsequent tasks
-  async function bootstrap(): Promise<void> {
-    /* Task 3 */
-  }
-  async function refresh(
-    _force?: boolean,
-    _signal?: AbortSignal,
-  ): Promise<void> {
-    /* Task 4 */
-  }
-  async function refreshOffline(_force?: boolean): Promise<void> {
-    /* Task 5 */
-  }
-  function updateModel(
-    _model: { provider?: string; id?: string; name?: string } | undefined,
-  ): void {
-    /* Task 6 */
-  }
-  function startLivePolling(): void {
-    /* Task 7 */
-  }
-  function shutdown(): void {
-    /* Task 8 */
-  }
+  // --- Stubs (filled in subsequent tasks) ---
+  let providerRefresh: Promise<void> | null = null;
+  let providerForcePending = false;
+  let periodicRefresh: NodeJS.Timeout | undefined;
+  let cacheWatcher: { close: () => void } | undefined;
+  let localCommandCodeCost = 0;
+
+  function applyCommandCodeLocalFallback(): void { /* Task 4 */ }
+  async function populateProviders(_force?: boolean, _signal?: AbortSignal): Promise<void> { /* Task 5 */ }
+  async function refreshOffline(_refresh: boolean, _token?: ScanToken): Promise<void> { /* Task 6 */ }
+  async function bootstrap(): Promise<void> { /* Task 7 */ }
+  function updateModel(_model: { provider?: string; id?: string; name?: string } | undefined): void { /* Task 8 */ }
+  async function emitProviderUpdate(_force?: boolean, _signal?: AbortSignal): Promise<void> { /* Task 9 */ }
+  async function prepareUsageDashboard(_refresh: boolean): Promise<{ cancelScan: () => void; scan: Promise<void> | undefined }> { /* Task 10 */ }
+  function startLiveRuntime(): void { /* Task 11 */ }
+  function shutdown(): void { /* Task 12 */ }
 
   return {
     bootstrap,
-    refresh,
+    populateProviders,
     refreshOffline,
+    prepareUsageDashboard,
     updateModel,
+    emitProviderUpdate,
     getState,
-    startLivePolling,
+    isLiveProvider,
+    startLiveRuntime,
     shutdown,
   };
 }
@@ -229,7 +362,7 @@ export function createUsageCore(options: UsageCoreOptions): UsageCore {
 - [ ] **Step 2: Verify compiles**
 
 Run: `pnpm typecheck`
-Expected: PASS
+Expected: PASS (stubs are typed correctly even if empty)
 
 - [ ] **Step 3: Commit**
 
@@ -239,28 +372,49 @@ feat(core): add UsageCore skeleton with interface and factory
 
 ---
 
-### Task 3: Move bootstrap logic into UsageCore
+### Task 4: Implement `applyCommandCodeLocalFallback`
 
 **Files:**
 
 - Modify: `src/core/usage-core.ts`
-- Modify: `src/index.ts` (remove bootstrap logic)
 
-- [ ] **Step 1: Implement bootstrap()**
+- [ ] **Step 1: Replace the stub**
 
-Move the session_start bootstrap sequence from index.ts into the core:
+Replace the `applyCommandCodeLocalFallback` stub with the actual implementation from index.ts lines 127-158:
 
 ```typescript
-async function bootstrap(): Promise<void> {
-  state.loading = true;
-  emit();
-
-  await Promise.all([refreshOffline(true), refresh(true)]);
-
-  state.loading = false;
-  state.generatedAt = deps.now();
-  emit();
-}
+  function applyCommandCodeLocalFallback(): void {
+    const ccIndex = state.providers.findIndex(
+      (p) => p.providerId === "command-code",
+    );
+    if (
+      ccIndex < 0 ||
+      localCommandCodeCost <= 0 ||
+      state.providers[ccIndex].available
+    ) {
+      return;
+    }
+    state.providers[ccIndex] = {
+      ...state.providers[ccIndex],
+      available: true,
+      status: "local",
+      sourceKind: "local",
+      sourceLabel: "Local Pi sessions",
+      diagnostic: "Live unavailable; showing local Pi session history.",
+      diagnostics: [
+        "Snapshot reflects only local Pi session history.",
+        ...state.providers[ccIndex].diagnostics,
+      ],
+      windows: [],
+      balances: [
+        {
+          label: "Local Pi session total",
+          remaining: localCommandCodeCost,
+          unit: "USD",
+        },
+      ],
+    };
+  }
 ```
 
 - [ ] **Step 2: Verify compiles**
@@ -271,249 +425,366 @@ Expected: PASS
 - [ ] **Step 3: Commit**
 
 ```
-refactor(core): implement UsageCore.bootstrap()
+refactor(core): implement applyCommandCodeLocalFallback in UsageCore
 ```
 
 ---
 
-### Task 4: Move `populateProviders()` into UsageCore.refresh()
+### Task 5: Implement `populateProviders` with mutex
 
 **Files:**
 
 - Modify: `src/core/usage-core.ts`
-- Modify: `src/index.ts` (remove `populateProviders`)
 
-- [ ] **Step 1: Implement refresh()**
+- [ ] **Step 1: Replace the stub**
 
-Move `populateProviders()` logic (index.ts lines ~198-249) including `mapWithLimit` usage:
-
-```typescript
-import { mapWithLimit } from "../shared/concurrency.ts";
-import { createProviderRegistry } from "../providers/index.ts";
-
-async function refresh(force = false, signal?: AbortSignal): Promise<void> {
-  if (!force && !state.refreshRequested) return;
-  state.refreshRequested = false;
-
-  const registry = createProviderRegistry(deps);
-  const results = await mapWithLimit(registry, 3, async (adapter) => {
-    const outcome = await adapter.fetch({ force, signal });
-    return outcome.snapshot;
-  });
-
-  state.providers = results;
-  state.generatedAt = deps.now();
-  applyCommandCodeLocalFallback();
-  emit();
-}
-```
-
-- [ ] **Step 2: Move `applyCommandCodeLocalFallback()`**
-
-This function patches the command-code provider with offline cost data. Move it into the core as a private function.
-
-- [ ] **Step 3: Verify tests pass**
-
-Run: `pnpm check`
-Expected: PASS
-
-- [ ] **Step 4: Commit**
-
-```
-refactor(core): move populateProviders into UsageCore.refresh()
-```
-
----
-
-### Task 5: Move `refreshOffline()` into UsageCore
-
-**Files:**
-
-- Modify: `src/core/usage-core.ts`
-- Modify: `src/index.ts` (remove `refreshOffline`)
-
-- [ ] **Step 1: Implement refreshOffline()**
-
-Move offline scanning logic (index.ts lines ~251-282):
+Replace the `populateProviders` stub. This preserves the exact concurrency control from index.ts lines 160-210:
 
 ```typescript
-import { buildInsights, scanOfflineUsage } from "../core/offline.ts";
-import { buildPeriods } from "../tui/dashboard-model.ts";
+  async function populateProviders(force = false, signal?: AbortSignal): Promise<void> {
+    if (providerRefresh) {
+      if (force) providerForcePending = true;
+      await providerRefresh;
+      if (force && providerForcePending) {
+        providerForcePending = false;
+        await populateProviders(true, signal);
+      }
+      return;
+    }
 
-async function refreshOffline(force = false): Promise<void> {
-  const result = await scanOfflineUsage(deps, {
-    refresh: force,
-    shouldCancel: () => shutdownRequested,
-  });
-
-  state.offline = {
-    providerId: "offline",
-    totals: [], // computed from result
-    periods: buildPeriods(result),
-    scannedFiles: result.scannedFiles,
-    messageCount: result.turns.length,
-  };
-  state.insights = buildInsights(result.turns);
-  emit();
-}
+    providerRefresh = mapWithLimit(
+      providers,
+      3,
+      async (provider) =>
+        (
+          await provider.fetch({
+            force,
+            signal,
+          })
+        ).snapshot,
+    )
+      .then((snapshots) => {
+        state.providers = snapshots;
+        applyCommandCodeLocalFallback();
+      })
+      .finally(() => {
+        providerRefresh = null;
+      });
+    return providerRefresh;
+  }
 ```
 
-- [ ] **Step 2: Verify tests pass**
+- [ ] **Step 2: Verify compiles**
 
-Run: `pnpm check`
+Run: `pnpm typecheck`
 Expected: PASS
 
 - [ ] **Step 3: Commit**
 
 ```
-refactor(core): move refreshOffline into UsageCore
+refactor(core): implement populateProviders with mutex in UsageCore
 ```
 
 ---
 
-### Task 6: Move `updateModelContext()` + `detectProviderFromModel()`
+### Task 6: Implement `refreshOffline`
 
 **Files:**
 
 - Modify: `src/core/usage-core.ts`
-- Modify: `src/index.ts` (remove both functions)
 
-- [ ] **Step 1: Move provider detection logic**
+- [ ] **Step 1: Replace the stub**
 
-Move `detectProviderFromModel()` (index.ts lines 58-86) as a private function inside the core:
-
-```typescript
-function detectProviderFromModel(
-  model: { provider?: string; id?: string; name?: string } | undefined,
-): ProviderId | undefined {
-  // ... exact existing implementation
-}
-
-function updateModel(
-  model: { provider?: string; id?: string; name?: string } | undefined,
-): void {
-  const detected = detectProviderFromModel(model);
-  if (detected === state.currentProviderId) return; // no-op
-  state.currentProviderId = detected ?? null;
-  if (model?.name) state.currentModelLabel = model.name;
-  emit();
-}
-```
-
-- [ ] **Step 2: Verify tests pass**
-
-Run: `pnpm check`
-Expected: PASS
-
-- [ ] **Step 3: Commit**
-
-```
-refactor(core): move updateModel + detectProviderFromModel into UsageCore
-```
-
----
-
-### Task 7: Move lifecycle management (polling timer, cache watcher)
-
-**Files:**
-
-- Modify: `src/core/usage-core.ts`
-- Modify: `src/index.ts` (remove timer/watcher setup)
-
-- [ ] **Step 1: Implement startLivePolling()**
-
-Move the 30-minute interval and cache watcher:
+Replace the `refreshOffline` stub. This is index.ts lines 212-242 verbatim:
 
 ```typescript
-const POLL_INTERVAL_MS = 1_800_000; // 30 minutes
-
-let periodicRefresh: ReturnType<typeof deps.setInterval> | undefined;
-let cacheWatcher: (() => void) | undefined;
-let shutdownRequested = false;
-
-function startLivePolling(): void {
-  if (periodicRefresh) return; // idempotent
-
-  periodicRefresh = deps.setInterval(() => {
-    refresh(true).catch(() => {});
-  }, POLL_INTERVAL_MS);
-
-  // Watch provider cache directory for external changes
-  try {
-    const cacheDir = providerCacheDir(deps);
-    const watcher = deps.watch(cacheDir);
-    cacheWatcher = () => watcher.close();
-    watcher.on("change", () => {
-      refresh(true).catch(() => {});
+  async function refreshOffline(refresh: boolean, token?: ScanToken): Promise<void> {
+    state.loading = true;
+    emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+    const result = await scanOfflineUsage(deps, {
+      refresh,
+      shouldCancel: () => token?.cancelled === true,
     });
-  } catch {
-    // Cache dir may not exist yet — not critical
+    if (token?.cancelled) {
+      state.loading = false;
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+      return;
+    }
+    state.offline.periods = buildPeriods(result);
+    state.offline.scannedFiles = result.scannedFiles;
+    state.offline.messageCount = result.turns.length;
+    state.insights = buildInsights(result.turns);
+    localCommandCodeCost = result.turns
+      .filter(
+        (turn) =>
+          (turn.provider === "command-code" ||
+            turn.provider === "commandcode") &&
+          turn.cost > 0,
+      )
+      .reduce((sum, turn) => sum + turn.cost, 0);
+
+    applyCommandCodeLocalFallback();
+
+    state.generatedAt = deps.now();
+    state.loading = false;
+    emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
   }
-}
 ```
 
-- [ ] **Step 2: Verify tests pass**
+Also add the import for `USAGE_CORE_UPDATE_CURRENT_EVENT` and `USAGE_CORE_READY_EVENT` at the top of the file:
 
-Run: `pnpm check`
+```typescript
+import {
+  USAGE_CORE_READY_EVENT,
+  USAGE_CORE_UPDATE_CURRENT_EVENT,
+  type UsageCorePayload,
+} from "../shared/events.ts";
+```
+
+(Update the existing import from `../shared/events.ts` to include the event name constants.)
+
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
 Expected: PASS
 
 - [ ] **Step 3: Commit**
 
 ```
-refactor(core): move polling timer and cache watcher into UsageCore
+refactor(core): implement refreshOffline in UsageCore
 ```
 
 ---
 
-### Task 8: Implement `UsageCore.shutdown()`
+### Task 7: Implement `bootstrap`
 
 **Files:**
 
 - Modify: `src/core/usage-core.ts`
 
-- [ ] **Step 1: Consolidate cleanup**
+- [ ] **Step 1: Replace the stub**
+
+Replace the `bootstrap` stub. From index.ts lines 244-248:
 
 ```typescript
-function shutdown(): void {
-  shutdownRequested = true;
-
-  if (periodicRefresh) {
-    deps.clearInterval(periodicRefresh);
-    periodicRefresh = undefined;
+  async function bootstrap(): Promise<void> {
+    await Promise.all([populateProviders(false), refreshOffline(false)]);
+    state.diagnostics = ["live runtime ready"];
+    emit(USAGE_CORE_READY_EVENT);
   }
+```
 
-  if (cacheWatcher) {
-    cacheWatcher();
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```
+refactor(core): implement bootstrap in UsageCore
+```
+
+---
+
+### Task 8: Implement `updateModel`
+
+**Files:**
+
+- Modify: `src/core/usage-core.ts`
+
+- [ ] **Step 1: Replace the stub**
+
+Replace the `updateModel` stub. From index.ts lines 250-261:
+
+```typescript
+  function updateModel(
+    model: { provider?: string; id?: string; name?: string } | undefined,
+  ): void {
+    state.currentProviderId = detectProviderFromModel(model) ?? null;
+    state.currentModelLabel = model?.id ?? model?.name;
+  }
+```
+
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```
+refactor(core): implement updateModel in UsageCore
+```
+
+---
+
+### Task 9: Implement `emitProviderUpdate`
+
+**Files:**
+
+- Modify: `src/core/usage-core.ts`
+
+- [ ] **Step 1: Replace the stub**
+
+Replace the `emitProviderUpdate` stub. From index.ts lines 263-266:
+
+```typescript
+  async function emitProviderUpdate(force = false, signal?: AbortSignal): Promise<void> {
+    await populateProviders(force, signal);
+    emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+  }
+```
+
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```
+refactor(core): implement emitProviderUpdate in UsageCore
+```
+
+---
+
+### Task 10: Implement `prepareUsageDashboard`
+
+**Files:**
+
+- Modify: `src/core/usage-core.ts`
+
+- [ ] **Step 1: Replace the stub**
+
+Replace the `prepareUsageDashboard` stub. From index.ts lines 330-348:
+
+```typescript
+  async function prepareUsageDashboard(refresh: boolean): Promise<{
+    cancelScan: () => void;
+    scan: Promise<void> | undefined;
+  }> {
+    if (refresh) {
+      state.refreshRequested = true;
+      state.diagnostics = [...state.diagnostics, "refresh requested"];
+      emit(USAGE_CORE_UPDATE_CURRENT_EVENT);
+    }
+
+    await populateProviders(refresh);
+    const scanToken: ScanToken = { cancelled: false };
+    const shouldScan =
+      refresh || (state.offline.periods.length === 0 && !state.loading);
+    const scan = shouldScan ? refreshOffline(refresh, scanToken) : undefined;
+    return {
+      cancelScan: () => {
+        scanToken.cancelled = true;
+      },
+      scan,
+    };
+  }
+```
+
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```
+refactor(core): implement prepareUsageDashboard in UsageCore
+```
+
+---
+
+### Task 11: Implement `startLiveRuntime`
+
+**Files:**
+
+- Modify: `src/core/usage-core.ts`
+
+- [ ] **Step 1: Replace the stub**
+
+Replace the `startLiveRuntime` stub. From index.ts lines 268-286:
+
+```typescript
+  function startLiveRuntime(): void {
+    if (!periodicRefresh) {
+      periodicRefresh = deps.setInterval(() => {
+        void emitProviderUpdate(false).catch(() => undefined);
+      }, 1_800_000);
+      deps.unrefTimer(periodicRefresh);
+    }
+    if (!cacheWatcher) {
+      void deps
+        .mkdir(providerCacheDir(deps), { recursive: true })
+        .then(() => {
+          cacheWatcher = deps.watch(providerCacheDir(deps), (filename) => {
+            if (!filename || !liveProviderSnapshotFiles.has(filename)) return;
+            void emitProviderUpdate(false).catch(() => undefined);
+          });
+        })
+        .catch(() => undefined);
+    }
+  }
+```
+
+- [ ] **Step 2: Verify compiles**
+
+Run: `pnpm typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```
+refactor(core): implement startLiveRuntime with polling and cache watcher
+```
+
+---
+
+### Task 12: Implement `shutdown`
+
+**Files:**
+
+- Modify: `src/core/usage-core.ts`
+
+- [ ] **Step 1: Replace the stub**
+
+Replace the `shutdown` stub. From index.ts lines 385-388:
+
+```typescript
+  function shutdown(): void {
+    if (periodicRefresh) deps.clearInterval(periodicRefresh);
+    periodicRefresh = undefined;
+    cacheWatcher?.close();
     cacheWatcher = undefined;
   }
-}
 ```
 
-- [ ] **Step 2: Verify tests pass**
+- [ ] **Step 2: Verify compiles**
 
-Run: `pnpm check`
+Run: `pnpm typecheck`
 Expected: PASS
 
 - [ ] **Step 3: Commit**
 
 ```
-refactor(core): implement UsageCore.shutdown() with full cleanup
+refactor(core): implement shutdown in UsageCore
 ```
 
 ---
 
-### Task 9: Shrink `index.ts` to thin Pi adapter
+### Task 13: Rewrite `src/index.ts` as thin Pi adapter
 
 **Files:**
 
 - Modify: `src/index.ts`
 
-- [ ] **Step 1: Rewrite index.ts**
+- [ ] **Step 1: Rewrite the file**
 
-Replace the 400+ line file with a thin adapter:
+Replace the entire contents of `src/index.ts` with:
 
 ```typescript
-// src/index.ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createUsageCore, type UsageCore } from "./core/usage-core.ts";
 import { createDefaultDeps, type UsageDeps } from "./shared/deps.ts";
@@ -522,79 +793,125 @@ import {
   USAGE_CORE_UPDATE_CURRENT_EVENT,
   type UsageCoreCurrentRequest,
 } from "./shared/events.ts";
-import type { UsageCoreState } from "./shared/types.ts";
+import { projectState } from "./core/state-projections.ts";
 import { openDashboard } from "./tui/dashboard.ts";
 
-export type UsageExtensionOptions = {
-  deps?: Partial<UsageDeps>;
-  injectedMode?: boolean;
-};
+export { detectProviderFromModel } from "./shared/provider-detection.ts";
 
-const GLOBAL_KEY = "__piUsageExtension";
+const GLOBAL_KEY = "__piUsage" as const;
+
+type GlobalUsageState = { initialized: true };
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __piUsage: GlobalUsageState | undefined;
+}
+
+export interface UsageExtensionOptions {
+  deps?: Partial<UsageDeps>;
+}
 
 function mergeDeps(overrides?: Partial<UsageDeps>): UsageDeps {
-  return overrides
-    ? { ...createDefaultDeps(), ...overrides }
-    : createDefaultDeps();
+  return { ...createDefaultDeps(), ...overrides };
 }
 
 function isCurrentRequest(value: unknown): value is UsageCoreCurrentRequest {
   return (
-    value != null &&
     typeof value === "object" &&
-    "reply" in value &&
-    typeof (value as Record<string, unknown>).reply === "function"
+    value !== null &&
+    (value as { type?: unknown }).type === "current" &&
+    typeof (value as { reply?: unknown }).reply === "function"
   );
 }
 
 export function createUsageExtension(options?: UsageExtensionOptions) {
   const deps = mergeDeps(options?.deps);
-  const injectedMode = options?.injectedMode ?? false;
+  const injectedMode = Boolean(options?.deps);
 
   return function usageExtension(pi: ExtensionAPI): void {
-    if (!injectedMode && (globalThis as Record<string, unknown>)[GLOBAL_KEY])
-      return;
-    if (!injectedMode)
-      (globalThis as Record<string, unknown>)[GLOBAL_KEY] = {
-        initialized: true,
-      };
+    if (!injectedMode && globalThis[GLOBAL_KEY]) return;
+    if (!injectedMode) globalThis[GLOBAL_KEY] = { initialized: true };
 
     const core = createUsageCore({
       deps,
-      onStateChange: (state) => {
-        pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, { state });
-      },
+      onEmit: (name, payload) => pi.events.emit(name, payload),
     });
 
-    // Pi hooks → core
-    pi.on("session_start", (_, ctx) => {
+    const dashboardBus = {
+      on: (event: string, handler: (...args: unknown[]) => void) =>
+        pi.events.on(event, handler as (...args: unknown[]) => void),
+    };
+    (globalThis as { __piUsageBus?: unknown }).__piUsageBus = dashboardBus;
+
+    // Pi hooks -> core
+    pi.on("session_start", (_event, ctx) => {
       core.updateModel(ctx.model);
-      core.startLivePolling();
-      core.bootstrap();
+      core.startLiveRuntime();
+      void core.bootstrap();
     });
-    pi.on("model_select", (e, ctx) => {
-      core.updateModel(e.model ?? ctx.model);
-      core.refresh(true, ctx.signal);
-    });
-    pi.on("turn_start", (_, ctx) => core.updateModel(ctx.model));
-    pi.on("turn_end", (_, ctx) => core.updateModel(ctx.model));
 
-    // Commands
+    pi.on("model_select", (event, ctx) => {
+      core.updateModel(event.model ?? ctx.model);
+      if (core.isLiveProvider(core.getState().currentProviderId)) {
+        void core.emitProviderUpdate(true, ctx.signal).catch(() => undefined);
+      } else {
+        pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, {
+          state: core.getState(),
+        });
+      }
+    });
+
+    pi.on("turn_start", (_event, ctx) => {
+      core.updateModel(ctx.model);
+      pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, {
+        state: core.getState(),
+      });
+    });
+
+    pi.on("turn_end", (_event, ctx) => {
+      core.updateModel(ctx.model);
+      pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, {
+        state: core.getState(),
+      });
+    });
+
+    const rejectArgs = (args: string) => args.trim() !== "";
+
     pi.registerCommand("usage", {
       description: "Open the usage dashboard",
-      execute: async (_, ctx) => {
-        openDashboard(core.getState(), ctx);
-      },
-    });
-    pi.registerCommand("usage:refresh", {
-      description: "Force refresh usage data",
-      execute: async (_, ctx) => {
-        await core.refresh(true, ctx.signal);
+      handler: async (args, ctx) => {
+        if (!ctx.hasUI) return;
+        if (rejectArgs(args)) {
+          ctx.ui.notify(
+            "Unknown /usage arguments. Use /usage with no args, or /usage:refresh to force a refresh.",
+            "warning",
+          );
+          return;
+        }
+        const { cancelScan, scan } = await core.prepareUsageDashboard(false);
+        await openDashboard(ctx, core.getState(), cancelScan);
+        await scan;
       },
     });
 
-    // Request/reply
-    const unsubscribe = pi.events.on(
+    pi.registerCommand("usage:refresh", {
+      description: "Refresh provider usage and open the usage dashboard",
+      handler: async (args, ctx) => {
+        if (!ctx.hasUI) return;
+        if (rejectArgs(args)) {
+          ctx.ui.notify(
+            "Unknown /usage:refresh arguments. /usage:refresh does not take any arguments.",
+            "warning",
+          );
+          return;
+        }
+        const { cancelScan, scan } = await core.prepareUsageDashboard(true);
+        await openDashboard(ctx, core.getState(), cancelScan);
+        await scan;
+      },
+    });
+
+    const unsubscribeRequestCurrent = pi.events.on(
       USAGE_CORE_REQUEST_EVENT,
       (payload: unknown) => {
         if (!isCurrentRequest(payload)) return;
@@ -602,30 +919,31 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
       },
     );
 
-    // Cleanup
     pi.on("session_shutdown", () => {
       core.shutdown();
-      delete (globalThis as Record<string, unknown>)[GLOBAL_KEY];
-      unsubscribe();
+      unsubscribeRequestCurrent();
+      delete globalThis[GLOBAL_KEY];
+      delete (globalThis as { __piUsageBus?: unknown }).__piUsageBus;
     });
   };
 }
 
-export default createUsageExtension;
+export default createUsageExtension();
 ```
-
-Note: Adapt the command handlers to match the exact existing signatures (check `pi.registerCommand` API). The above is a template — read the current index.ts command implementations to get the exact `execute` signatures and `openDashboard` call pattern.
 
 - [ ] **Step 2: Verify line count**
 
 ```bash
 wc -l src/index.ts
-# Must be <= 100
 ```
 
-- [ ] **Step 3: Verify tests pass**
+Expected: ~120 lines (slightly above the 100-line target due to command handlers, but all orchestration is gone).
 
-Run: `pnpm check`
+Note: If the line count is slightly above 100, that's acceptable — the goal is that no state management, timers, or orchestration logic lives in this file.
+
+- [ ] **Step 3: Verify compiles**
+
+Run: `pnpm typecheck`
 Expected: PASS
 
 - [ ] **Step 4: Commit**
@@ -633,13 +951,48 @@ Expected: PASS
 ```
 refactor(index): shrink to thin Pi adapter using UsageCore
 
-index.ts reduced from 437 to ~90 lines.
-All orchestration now lives in src/core/usage-core.ts.
+All state management, timers, provider orchestration, and offline
+scanning now live in src/core/usage-core.ts. index.ts only maps
+Pi lifecycle hooks to core method calls.
 ```
 
 ---
 
-### Task 10: Create `tests/usage-core.test.ts`
+### Task 14: Fix behavioral difference — `model_select` emit uses `structuredClone`
+
+**Files:**
+
+- Modify: `src/index.ts`
+
+After Task 13, the `model_select`, `turn_start`, and `turn_end` handlers that emit directly (not through core) use `core.getState()` which already returns a `structuredClone`. Verify this is consistent.
+
+- [ ] **Step 1: Verify `getState()` returns a clone**
+
+In `src/core/usage-core.ts`, the `getState()` function is:
+```typescript
+function getState(): UsageCoreState {
+  return structuredClone(projectState(state));
+}
+```
+
+This means the `pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, { state: core.getState() })` calls in index.ts produce structuredClone'd payloads — matching the original behavior.
+
+- [ ] **Step 2: Run full test suite**
+
+Run: `pnpm check`
+Expected: PASS
+
+If there's a test failure related to the `model_select` emit not going through `onEmit`, it's because the original code calls `emit(USAGE_CORE_UPDATE_CURRENT_EVENT)` which does `structuredClone(projectState(state))`. The new code calls `core.getState()` which does the same thing. Both produce `{ state: UsageCoreState }` payloads. Confirmed correct.
+
+- [ ] **Step 3: Commit (only if changes were needed)**
+
+```
+fix(index): ensure model_select/turn emit payloads match original behavior
+```
+
+---
+
+### Task 15: Create `tests/usage-core.test.ts`
 
 **Files:**
 
@@ -648,25 +1001,32 @@ All orchestration now lives in src/core/usage-core.ts.
 - [ ] **Step 1: Write core-specific unit tests (no Pi mocks)**
 
 ```typescript
-import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createDefaultDeps } from "../src/shared/deps.ts";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { createUsageCore, type UsageCore } from "../src/core/usage-core.ts";
+import { createDefaultDeps } from "../src/shared/deps.ts";
+import {
+  USAGE_CORE_READY_EVENT,
+  USAGE_CORE_UPDATE_CURRENT_EVENT,
+  type UsageCorePayload,
+} from "../src/shared/events.ts";
 import type { UsageCoreState } from "../src/shared/types.ts";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "pi-usage-core-"));
 }
 
-function createTestDeps(root: string) {
-  const deps = createDefaultDeps();
+function createTestDeps(root: string, overrides?: Partial<ReturnType<typeof createDefaultDeps>>) {
   return {
-    ...deps,
+    ...createDefaultDeps(),
     agentDir: () => root,
-    now: () => 1_000_000,
-    env: {},
+    now: () => Date.parse("2026-06-01T12:00:00Z"),
+    fetch: vi.fn(async () => {
+      throw new Error("network unavailable");
+    }) as never,
+    ...overrides,
   };
 }
 
@@ -675,50 +1035,155 @@ describe("UsageCore", () => {
     const root = mkTmp();
     const core = createUsageCore({
       deps: createTestDeps(root),
-      onStateChange: () => {},
+      onEmit: () => {},
     });
     const s = core.getState();
     expect(s.currentProviderId).toBeNull();
     expect(s.currentProviderSnapshot).toBeNull();
     expect(s.compatibility.currentLiveProviderId).toBeNull();
     expect(s.providers).toEqual([]);
+    expect(s.loading).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("updateModel sets currentProviderId and emits", () => {
+  it("updateModel sets currentProviderId", () => {
     const root = mkTmp();
-    const changes: UsageCoreState[] = [];
     const core = createUsageCore({
       deps: createTestDeps(root),
-      onStateChange: (s) => changes.push(s),
+      onEmit: () => {},
     });
-    core.updateModel({ provider: "openai", id: "gpt-4o", name: "GPT-4o" });
-    expect(changes.length).toBeGreaterThanOrEqual(1);
-    expect(core.getState().currentProviderId).not.toBeNull();
+    core.updateModel({ provider: "openai-codex", id: "gpt-5" });
+    expect(core.getState().currentProviderId).toBe("openai-codex");
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("shutdown stops polling and cache watcher", () => {
+  it("updateModel sets currentModelLabel from id", () => {
     const root = mkTmp();
     const core = createUsageCore({
       deps: createTestDeps(root),
-      onStateChange: () => {},
+      onEmit: () => {},
     });
-    core.startLivePolling();
+    core.updateModel({ provider: "minimax", id: "minimax-pro" });
+    expect(core.getState().currentModelLabel).toBe("minimax-pro");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("isLiveProvider returns true for api-strategy providers", () => {
+    const root = mkTmp();
+    const core = createUsageCore({
+      deps: createTestDeps(root),
+      onEmit: () => {},
+    });
+    expect(core.isLiveProvider("openai-codex")).toBe(true);
+    expect(core.isLiveProvider("minimax")).toBe(true);
+    expect(core.isLiveProvider("offline")).toBe(false);
+    expect(core.isLiveProvider(null)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("bootstrap emits READY event with providers populated", async () => {
+    const root = mkTmp();
+    mkdirSync(join(root, "sessions"), { recursive: true });
+    const emitted: Array<{ name: string }> = [];
+    const core = createUsageCore({
+      deps: createTestDeps(root),
+      onEmit: (name) => emitted.push({ name }),
+    });
+    await core.bootstrap();
+    expect(emitted.some((e) => e.name === USAGE_CORE_READY_EVENT)).toBe(true);
+    expect(core.getState().diagnostics).toContain("live runtime ready");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refreshOffline scans sessions and emits state updates", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${JSON.stringify({
+        type: "message",
+        id: "m1",
+        timestamp: "2026-06-01T11:00:00Z",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5-codex",
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+        },
+      })}\n`,
+    );
+    const emitted: string[] = [];
+    const core = createUsageCore({
+      deps: createTestDeps(root),
+      onEmit: (name) => emitted.push(name),
+    });
+    await core.refreshOffline(true);
+    expect(core.getState().offline.messageCount).toBe(1);
+    expect(core.getState().offline.periods.length).toBeGreaterThan(0);
+    expect(core.getState().loading).toBe(false);
+    expect(emitted.filter((e) => e === USAGE_CORE_UPDATE_CURRENT_EVENT).length).toBeGreaterThanOrEqual(2);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refreshOffline respects scan token cancellation", async () => {
+    const root = mkTmp();
+    mkdirSync(join(root, "sessions"), { recursive: true });
+    const core = createUsageCore({
+      deps: createTestDeps(root),
+      onEmit: () => {},
+    });
+    const token = { cancelled: true };
+    await core.refreshOffline(true, token);
+    expect(core.getState().offline.messageCount).toBe(0);
+    expect(core.getState().loading).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("shutdown stops polling timer", () => {
+    const root = mkTmp();
+    const clearInterval = vi.fn();
+    const core = createUsageCore({
+      deps: createTestDeps(root, {
+        setInterval: vi.fn(() => ({}) as unknown as NodeJS.Timeout),
+        clearInterval,
+        unrefTimer: vi.fn(),
+        mkdir: vi.fn(async () => undefined) as never,
+        watch: vi.fn(() => ({ close() {} })),
+      }),
+      onEmit: () => {},
+    });
+    core.startLiveRuntime();
     core.shutdown();
-    // No error thrown, timers cleaned up
+    expect(clearInterval).toHaveBeenCalled();
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("refresh populates providers array", async () => {
+  it("populateProviders populates state.providers", async () => {
     const root = mkTmp();
     const core = createUsageCore({
-      deps: { ...createTestDeps(root), env: {} },
-      onStateChange: () => {},
+      deps: createTestDeps(root),
+      onEmit: () => {},
     });
-    await core.refresh(true);
-    // Even with no credentials, providers array should be populated (unavailable snapshots)
-    expect(core.getState().providers.length).toBeGreaterThanOrEqual(0);
+    await core.populateProviders(true);
+    // Even with no credentials, every provider returns an unavailable snapshot
+    expect(core.getState().providers.length).toBeGreaterThan(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("prepareUsageDashboard with refresh sets refreshRequested", async () => {
+    const root = mkTmp();
+    mkdirSync(join(root, "sessions"), { recursive: true });
+    const emitted: string[] = [];
+    const core = createUsageCore({
+      deps: createTestDeps(root),
+      onEmit: (name) => emitted.push(name),
+    });
+    const { cancelScan, scan } = await core.prepareUsageDashboard(true);
+    expect(core.getState().refreshRequested).toBe(true);
+    expect(core.getState().diagnostics).toContain("refresh requested");
+    cancelScan();
+    if (scan) await scan;
     rmSync(root, { recursive: true, force: true });
   });
 });
@@ -737,7 +1202,7 @@ test(core): add UsageCore unit tests without Pi extension mocks
 
 ---
 
-### Task 11: Verify existing integration tests pass
+### Task 16: Verify existing integration tests pass
 
 **Files:** None (verification only)
 
@@ -747,40 +1212,67 @@ test(core): add UsageCore unit tests without Pi extension mocks
 pnpm check
 ```
 
-All existing tests must pass, especially `tests/index.test.ts` (13 tests) which exercises the full Pi extension API through `createUsageExtension`.
+All existing tests must pass, especially:
+- `tests/index.test.ts` (13 tests) — exercises the full Pi extension API
+- `tests/provider-registry.test.ts` — imports `detectProviderFromModel` from `../src/index.ts`
 
 - [ ] **Step 2: Fix any regressions**
 
-If tests fail, the most likely causes are:
+Most likely causes of failure:
 
-- Import path changes (update test imports)
-- Event emission timing differences (adjust test waitForEvent timeouts)
-- Mock Pi API mismatch (ensure command/hook signatures match)
+1. **Import path changes** — `tests/provider-registry.test.ts` imports `detectProviderFromModel` from `../src/index.ts`. The re-export in Task 2 should handle this. If not, check the export statement.
+
+2. **`projectState` import in index.ts** — The new index.ts imports `projectState` for the unused `import` reference. Remove if not needed (only needed if you call `projectState` directly in index.ts — check if the `turn_start`/`turn_end` handlers need it). Actually they use `core.getState()` which already calls `projectState` internally. Remove the `projectState` import from index.ts if the linter complains about unused imports.
+
+3. **Event emission timing** — The `model_select` handler in index.ts now calls `core.emitProviderUpdate(true, ctx.signal)` when a live provider is selected. The old code called `emitProviderUpdate(true, ctx.signal)`. These should behave identically. If a test times out, increase the `waitForCondition` retry count.
+
+4. **`structuredClone` on turn events** — Old code: `emit(USAGE_CORE_UPDATE_CURRENT_EVENT)` → `{ state: structuredClone(projectState(state)) }`. New code: `{ state: core.getState() }` → `structuredClone(projectState(state))`. Identical result.
+
+- [ ] **Step 3: Commit (only if fixes were needed)**
+
+```
+fix: resolve integration test regressions from UsageCore extraction
+```
 
 ---
 
-### Task 12: Final verification and exit criteria
+### Task 17: Final verification and exit criteria
 
-- [ ] **Step 1: Verify line count**
-
-```bash
-wc -l src/index.ts
-# Must be <= 100
-```
-
-- [ ] **Step 2: Verify no scattered lifecycle in index.ts**
+- [ ] **Step 1: Verify no orchestration logic in index.ts**
 
 ```bash
 grep -n "setInterval\|setTimeout\|clearInterval\|clearTimeout\|\.watch(" src/index.ts
-# Expected: 0 matches
 ```
 
-- [ ] **Step 3: Verify UsageCore is testable without Pi**
+Expected: 0 matches
+
+```bash
+grep -n "scanOfflineUsage\|buildInsights\|buildPeriods\|mapWithLimit" src/index.ts
+```
+
+Expected: 0 matches
+
+```bash
+grep -n "providerRefresh\|providerForcePending\|localCommandCodeCost" src/index.ts
+```
+
+Expected: 0 matches
+
+- [ ] **Step 2: Verify UsageCore is testable without Pi**
 
 ```bash
 grep -n "pi-coding-agent\|ExtensionAPI" tests/usage-core.test.ts
-# Expected: 0 matches (core tests don't import Pi types)
 ```
+
+Expected: 0 matches
+
+- [ ] **Step 3: Verify detectProviderFromModel is still exported**
+
+```bash
+grep -n "detectProviderFromModel" src/index.ts
+```
+
+Expected: 1 match (the re-export line)
 
 - [ ] **Step 4: Run full check one final time**
 
@@ -788,24 +1280,30 @@ grep -n "pi-coding-agent\|ExtensionAPI" tests/usage-core.test.ts
 pnpm check
 ```
 
+Expected: All tests pass, no lint errors, no type errors.
+
 ---
 
 ## Exit Criteria
 
-- [ ] `index.ts` <= 100 lines
+- [ ] `index.ts` contains no state management, timers, or orchestration logic
 - [ ] `UsageCore` testable without Pi extension API mocks
 - [ ] No scattered timer/watcher variables in index.ts
-- [ ] All existing tests pass (11 test files)
+- [ ] All existing tests pass (17 test files + new `usage-core.test.ts`)
 - [ ] `mapWithLimit` independently tested in `tests/concurrency.test.ts`
-- [ ] New `tests/usage-core.test.ts` passes
+- [ ] `detectProviderFromModel` still exported from package entry point
+- [ ] `providerRefresh` mutex pattern preserved in core
 - [ ] `pnpm check` passes
 
 ## Risk Mitigation
 
-| Risk                         | Mitigation                                                 |
-| ---------------------------- | ---------------------------------------------------------- |
-| Breaking Pi hook behavior    | `tests/index.test.ts` is the integration safety net        |
-| Timer leaks                  | `shutdown()` consolidates all cleanup; tested in isolation |
-| State emission order changes | Tests assert on emission counts and final state            |
-| Import cycle (core ↔ index)  | Core never imports from index; dependency flows one way    |
-| `openDashboard` coupling     | Stays in index.ts (it's a Pi-specific UI concern)          |
+| Risk | Mitigation |
+| --- | --- |
+| Breaking Pi hook behavior | `tests/index.test.ts` is the integration safety net — all 13 tests must pass |
+| Timer leaks | `shutdown()` consolidates cleanup; tested in `usage-core.test.ts` |
+| State emission order changes | Tests assert on emission counts and final state values |
+| Import cycle (core <-> index) | Core never imports from index; dependency flows one way |
+| `detectProviderFromModel` breakage | Re-exported from index.ts; `tests/provider-registry.test.ts` verifies |
+| `providerRefresh` race conditions | Mutex pattern copied verbatim from working code |
+| `openDashboard` signature mismatch | Uses `(ctx, state, cancelScan)` — verified against `src/tui/dashboard.ts` |
+| `model_select` conditional logic | `core.isLiveProvider()` replaces inline `liveProviderIds.has()` check |
