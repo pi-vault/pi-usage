@@ -4,7 +4,9 @@ import type { UsageDeps } from "../shared/deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../shared/types.ts";
 import {
   fetchWithLiveRuntime,
+  fetchWithTimeout,
   parseEpochMs,
+  readJsonObject,
   readJsonSafe,
   retryAfterMs,
 } from "./runtime.ts";
@@ -179,13 +181,10 @@ export function createOpenAICodexProvider(
               };
             }
 
-            const timeout = new AbortController();
-            const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-            const combinedSignal = signal
-              ? AbortSignal.any([signal, timeout.signal])
-              : timeout.signal;
-            const res = await deps
-              .fetch("https://chatgpt.com/backend-api/wham/usage", {
+            const res = await fetchWithTimeout(
+              deps,
+              "https://chatgpt.com/backend-api/wham/usage",
+              {
                 method: "GET",
                 headers: {
                   Authorization: `Bearer ${auth.token}`,
@@ -194,9 +193,9 @@ export function createOpenAICodexProvider(
                     ? { "ChatGPT-Account-Id": auth.accountId }
                     : {}),
                 },
-                signal: combinedSignal,
-              })
-              .finally(() => deps.clearTimeout(timer));
+                signal,
+              },
+            );
 
             if (res.status === 429) {
               return {
@@ -217,9 +216,7 @@ export function createOpenAICodexProvider(
                 message: "Live source unavailable.",
               };
 
-            const data = (await res.json().catch(() => undefined)) as
-              | Record<string, unknown>
-              | undefined;
+            const data = await readJsonObject(res);
             if (!data)
               return {
                 kind: "error" as const,
