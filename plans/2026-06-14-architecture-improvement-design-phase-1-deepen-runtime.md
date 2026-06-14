@@ -10,7 +10,7 @@ Absorb duplicated HTTP/parsing boilerplate from 6 providers into `src/providers/
 pnpm check   # biome lint . && tsc --noEmit && vitest run
 ```
 
-Run after every commit. All 11 existing test files must continue to pass without modification.
+Run after every commit. All 11 existing test files (109 tests) must continue to pass without modification.
 
 ---
 
@@ -29,7 +29,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDefaultDeps } from "../src/shared/deps.ts";
 import {
   clampPercent,
-  extractCookieValue,
+  clampPercentRounded,
   fetchWithTimeout,
   readJsonObject,
 } from "../src/providers/runtime.ts";
@@ -177,11 +177,14 @@ Replaces the inline JSON parsing + type-check pattern used across providers.
 
 ---
 
-## Task 3 — Add `clampPercent` to runtime.ts
+## Task 3 — Add `clampPercent` and `clampPercentRounded` to runtime.ts
 
 ### What
 
-Unifies `clampPct` (opencode-go) and `clampPercent` (minimax, stepfun) into a single export.
+Two clamping utilities for different use cases:
+
+- `clampPercent` — clamp to [0, 100] without rounding. Used by opencode-go where fractional percentages are preserved (e.g. `12.4`).
+- `clampPercentRounded` — clamp to [0, 100] and round. Used by minimax and stepfun where integer percentages are expected.
 
 ### Test (append to `tests/runtime-utilities.test.ts`)
 
@@ -195,9 +198,9 @@ describe("clampPercent", () => {
     expect(clampPercent(150)).toBe(100);
   });
 
-  it("rounds to nearest integer", () => {
-    expect(clampPercent(42.7)).toBe(43);
-    expect(clampPercent(42.3)).toBe(42);
+  it("preserves fractional values", () => {
+    expect(clampPercent(42.7)).toBe(42.7);
+    expect(clampPercent(12.4)).toBe(12.4);
   });
 
   it("passes through valid values unchanged", () => {
@@ -206,67 +209,25 @@ describe("clampPercent", () => {
     expect(clampPercent(100)).toBe(100);
   });
 });
-```
 
-### Implementation
-
-**File:** `src/providers/runtime.ts`:
-
-```typescript
-/** Clamp a percentage to [0, 100] and round to the nearest integer. */
-export function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-```
-
-### Note on opencode-go
-
-`opencode-go.ts` uses `clampPct` without `Math.round`. Its values are already integers (parsed from regex `([\d.]+)`). After switching to `clampPercent` (with round), behavior is identical for integer inputs. For edge cases like `99.6`, rounding to `100` is correct.
-
-### Commit
-
-```
-feat(runtime): add clampPercent utility
-
-Unifies the 3 local clampPct/clampPercent definitions into one shared export.
-```
-
----
-
-## Task 4 — Add `extractCookieValue` to runtime.ts
-
-### What
-
-Extracts named cookie values from a semicolon-delimited cookie header string. Used by opencode-go (`filterCookieHeader`) and stepfun (`normalizeStepFunToken`).
-
-### Test (append to `tests/runtime-utilities.test.ts`)
-
-```typescript
-describe("extractCookieValue", () => {
-  it("extracts a named cookie value", () => {
-    expect(extractCookieValue("auth=abc123; other=x", ["auth"])).toBe("abc123");
+describe("clampPercentRounded", () => {
+  it("clamps and rounds below 0 to 0", () => {
+    expect(clampPercentRounded(-5)).toBe(0);
   });
 
-  it("returns first matching name", () => {
-    expect(
-      extractCookieValue("__Host-auth=def; auth=abc", ["auth", "__Host-auth"]),
-    ).toBe("abc");
+  it("clamps and rounds above 100 to 100", () => {
+    expect(clampPercentRounded(150)).toBe(100);
   });
 
-  it("returns undefined when no match", () => {
-    expect(extractCookieValue("session=xyz", ["auth"])).toBeUndefined();
+  it("rounds to nearest integer", () => {
+    expect(clampPercentRounded(42.7)).toBe(43);
+    expect(clampPercentRounded(42.3)).toBe(42);
   });
 
-  it("handles empty cookie header", () => {
-    expect(extractCookieValue("", ["auth"])).toBeUndefined();
-  });
-
-  it("handles bare values without =", () => {
-    expect(extractCookieValue("baretoken; auth=val", ["auth"])).toBe("val");
-  });
-
-  it("trims whitespace", () => {
-    expect(extractCookieValue(" auth = spaced ", ["auth"])).toBe("spaced");
+  it("passes through integers unchanged", () => {
+    expect(clampPercentRounded(0)).toBe(0);
+    expect(clampPercentRounded(50)).toBe(50);
+    expect(clampPercentRounded(100)).toBe(100);
   });
 });
 ```
@@ -276,44 +237,35 @@ describe("extractCookieValue", () => {
 **File:** `src/providers/runtime.ts`:
 
 ```typescript
-/**
- * Extract the value of the first matching cookie name from a semicolon-delimited header.
- * Returns undefined if no matching name is found.
- */
-export function extractCookieValue(
-  cookieHeader: string,
-  names: string[],
-): string | undefined {
-  const parts = cookieHeader
-    .split(";")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  for (const name of names) {
-    for (const part of parts) {
-      const eqIdx = part.indexOf("=");
-      if (eqIdx < 1) continue;
-      const key = part.slice(0, eqIdx).trim();
-      if (key === name) {
-        const value = part.slice(eqIdx + 1).trim();
-        if (value) return value;
-      }
-    }
-  }
-  return undefined;
+/** Clamp a percentage to [0, 100]. Preserves fractional values. */
+export function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+/** Clamp a percentage to [0, 100] and round to the nearest integer. */
+export function clampPercentRounded(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 ```
+
+### Why two functions
+
+`opencode-go.ts` uses `clampPct` without rounding — its dashboard scraper returns values like `12.4` that tests assert on. The local estimate path uses `Math.floor(clampPct(...))` deliberately for floor behavior. Conflating these into a single rounded function would break existing tests and change behavior.
+
+`minimax.ts` and `stepfun.ts` both round because they compute percentages from ratios and want integer display values.
 
 ### Commit
 
 ```
-feat(runtime): add extractCookieValue utility
+feat(runtime): add clampPercent and clampPercentRounded utilities
 
-Shared cookie parsing for providers that authenticate via cookie headers.
+clampPercent preserves fractional values (opencode-go dashboard path).
+clampPercentRounded provides clamp+round for minimax and stepfun.
 ```
 
 ---
 
-## Task 5 — Migrate openai-codex.ts
+## Task 4 — Migrate openai-codex.ts
 
 ### What
 
@@ -336,7 +288,7 @@ import {
 } from "./runtime.ts";
 ```
 
-2. In `createOpenAICodexProvider`, inside `fetchLive` (around lines 182-220), replace:
+2. In `createOpenAICodexProvider`, inside `fetchLive` (lines 182-199), replace:
 
 ```typescript
 // REMOVE these lines:
@@ -345,37 +297,38 @@ const timer = deps.setTimeout(() => timeout.abort(), 5_000);
 const combinedSignal = signal
   ? AbortSignal.any([signal, timeout.signal])
   : timeout.signal;
-
-let res: Response;
-try {
-  res = await deps.fetch(url, {
+const res = await deps
+  .fetch("https://chatgpt.com/backend-api/wham/usage", {
     method: "GET",
-    headers,
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      Accept: "application/json",
+      ...(auth.accountId ? { "ChatGPT-Account-Id": auth.accountId } : {}),
+    },
     signal: combinedSignal,
-  });
-} catch {
-  deps.clearTimeout(timer);
-  return {
-    kind: "error" as const,
-    message: "OpenAI rate-limit endpoint unavailable.",
-  };
-}
-deps.clearTimeout(timer);
+  })
+  .finally(() => deps.clearTimeout(timer));
 ```
 
 With:
 
 ```typescript
-let res: Response;
-try {
-  res = await fetchWithTimeout(deps, url, { method: "GET", headers, signal });
-} catch {
-  return {
-    kind: "error" as const,
-    message: "OpenAI rate-limit endpoint unavailable.",
-  };
-}
+const res = await fetchWithTimeout(
+  deps,
+  "https://chatgpt.com/backend-api/wham/usage",
+  {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      Accept: "application/json",
+      ...(auth.accountId ? { "ChatGPT-Account-Id": auth.accountId } : {}),
+    },
+    signal,
+  },
+);
 ```
+
+Note: The current code uses `.finally()` chaining (not try/catch). If `deps.fetch` throws (network error), the exception propagates up to the `fetchWithLiveRuntime` outer catch which produces `{ kind: "error", message: "Live source unavailable." }`. After this refactor, `fetchWithTimeout` similarly lets exceptions propagate. Behavior is unchanged.
 
 3. Replace JSON parsing:
 
@@ -400,7 +353,7 @@ if (!data) { ... }
 pnpm check
 ```
 
-All `provider-openai-codex.test.ts` tests must pass unchanged.
+All 11 `provider-openai-codex.test.ts` tests must pass unchanged.
 
 ### Commit
 
@@ -408,12 +361,12 @@ All `provider-openai-codex.test.ts` tests must pass unchanged.
 refactor(openai-codex): use fetchWithTimeout and readJsonObject
 
 Removes inline timeout/signal wiring and JSON parsing boilerplate.
-Net -12 lines.
+Net -10 lines.
 ```
 
 ---
 
-## Task 6 — Migrate openrouter.ts
+## Task 5 — Migrate openrouter.ts
 
 ### What
 
@@ -497,7 +450,7 @@ if (!json) { ... }
 pnpm check
 ```
 
-All 16 `provider-openrouter.test.ts` tests must pass unchanged.
+All 15 `provider-openrouter.test.ts` tests must pass unchanged.
 
 ### Commit
 
@@ -510,11 +463,11 @@ Net -20 lines.
 
 ---
 
-## Task 7 — Migrate minimax.ts
+## Task 6 — Migrate minimax.ts
 
 ### What
 
-Replace timeout pattern, JSON parsing, and local `clampPercent` definition.
+Replace timeout pattern, JSON parsing, and local `clampPercent` definition with `clampPercentRounded`.
 
 ### Changes
 
@@ -524,7 +477,7 @@ Replace timeout pattern, JSON parsing, and local `clampPercent` definition.
 
 ```typescript
 import {
-  clampPercent,
+  clampPercentRounded,
   fetchWithLiveRuntime,
   fetchWithTimeout,
   parseEpochMs,
@@ -536,19 +489,45 @@ import {
 
 2. Delete local `clampPercent` function (lines 34-36).
 
-3. In `createMiniMaxProvider` fetchLive, replace the timeout pattern (lines 366-370) and the `request` helper with `fetchWithTimeout`:
+3. Replace all `clampPercent(...)` calls with `clampPercentRounded(...)`.
+
+4. In `createMiniMaxProvider` fetchLive, replace the `request` helper (lines 365-383) with `fetchWithTimeout`:
 
 ```typescript
-// REMOVE the local request() helper with its timeout wiring.
-// Replace each fetch call:
-const res = await fetchWithTimeout(deps, url, {
-  method: "GET",
-  headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-  signal,
-});
+// REMOVE the local request() helper with its timeout wiring:
+const request = async (baseHost: string) => {
+  const timeout = new AbortController();
+  const timer = deps.setTimeout(() => timeout.abort(), 5_000);
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeout.signal])
+    : timeout.signal;
+  return deps
+    .fetch(`${baseHost}${endpoint}`, {
+      method: "GET",
+      headers: { ... },
+      signal: combinedSignal,
+    })
+    .finally(() => deps.clearTimeout(timer));
+};
 ```
 
-4. Replace JSON parsing:
+With:
+
+```typescript
+const request = async (baseHost: string) =>
+  fetchWithTimeout(deps, `${baseHost}${endpoint}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "MM-API-Source": "pi-coding-agent",
+    },
+    signal,
+  });
+```
+
+5. Replace JSON parsing:
 
 ```typescript
 // REMOVE:
@@ -569,7 +548,7 @@ const data = await readJsonObject(res);
 pnpm check
 ```
 
-All 12 `provider-minimax.test.ts` tests must pass unchanged.
+All 11 `provider-minimax.test.ts` tests must pass unchanged.
 
 ### Commit
 
@@ -582,7 +561,7 @@ Net -15 lines.
 
 ---
 
-## Task 8 — Migrate stepfun.ts
+## Task 7 — Migrate stepfun.ts
 
 ### What
 
@@ -596,7 +575,7 @@ Replace timeout pattern, local `clampPercent`, and local `readJsonObject` with s
 
 ```typescript
 import {
-  clampPercent,
+  clampPercentRounded,
   fetchWithLiveRuntime,
   fetchWithTimeout,
   parseEpochMs,
@@ -608,9 +587,13 @@ import {
 
 2. Delete local `clampPercent` (lines 70-72).
 
-3. Delete local `readJsonObject` (lines 91-98) — it's now imported.
+3. Replace all `clampPercent(...)` calls with `clampPercentRounded(...)`.
 
-4. In `createStepFunProvider` fetchLive, replace timeout pattern with `fetchWithTimeout`:
+4. Delete local `readJsonObject` (lines 91-98) — it's now imported from runtime.
+
+   Note: stepfun's local `readJsonObject` does not include the `!Array.isArray(data)` check that the shared version does. Its callers always expect objects from the StepFun API, so the stricter shared version is a safe upgrade.
+
+5. Remove the outer timeout from `createStepFunProvider`'s `fetchLive`:
 
 ```typescript
 // REMOVE:
@@ -619,17 +602,29 @@ const timer = deps.setTimeout(() => timeout.abort(), 5_000);
 const combinedSignal = signal
   ? AbortSignal.any([signal, timeout.signal])
   : timeout.signal;
+// ... and the finally block:
+} finally {
+  deps.clearTimeout(timer);
+}
 ```
 
-5. Pass `signal` directly (not `combinedSignal`) to `loginStepFun` and `fetchStepFunUsage`, since those helpers internally call `fetchWithTimeout` for each individual fetch.
+6. In `loginStepFun`, wrap each `deps.fetch(...)` call with `fetchWithTimeout(deps, ...)`:
 
-   Wait — stepfun uses a single timeout wrapping the entire flow (login + usage fetch). Converting to per-call timeouts means each network call gets its own 5s budget. This is actually more generous (total possible time = 5s \* N calls instead of 5s total). This is acceptable — individual call timeouts prevent any single slow call from hanging, and the overall flow is bounded by the number of sequential calls.
+```typescript
+// BEFORE (3 occurrences):
+await deps.fetch(url, { ..., signal })
 
-   In `loginStepFun`, replace each `deps.fetch(url, { ..., signal })` with `fetchWithTimeout(deps, url, { ..., signal })` (no explicit signal parameter on options since `fetchWithTimeout` handles it).
+// AFTER:
+await fetchWithTimeout(deps, url, { ..., signal })
+```
 
-   In `fetchStepFunUsage`, same transformation for each fetch call.
+7. In `fetchStepFunUsage`, same transformation for each `deps.fetch(...)` call (2 occurrences).
 
-6. Remove the outer timeout entirely from `createStepFunProvider`'s fetchLive.
+8. Pass `signal` (not `combinedSignal`) to `loginStepFun` and `fetchStepFunUsage`.
+
+### Timeout semantics change
+
+The outer timeout previously gave a 5s budget for the ENTIRE flow (login + usage fetch = up to 5 sequential network calls). After this refactor, each network call gets its own 5s budget. This is intentionally more generous — it prevents any single slow call from hanging while allowing multi-step flows to complete. Total worst-case time increases from 5s to ~25s (5 calls × 5s each), but in practice all calls are fast or the first slow one triggers a timeout.
 
 ### Verification
 
@@ -637,7 +632,7 @@ const combinedSignal = signal
 pnpm check
 ```
 
-All 5 `provider-stepfun.test.ts` tests must pass unchanged.
+All 6 `provider-stepfun.test.ts` tests must pass unchanged.
 
 ### Commit
 
@@ -651,7 +646,7 @@ Net -18 lines.
 
 ---
 
-## Task 9 — Migrate command-code.ts
+## Task 8 — Migrate command-code.ts
 
 ### What
 
@@ -668,6 +663,7 @@ import {
   fetchWithLiveRuntime,
   fetchWithTimeout,
   readJsonObject,
+  retryAfterMs,
   toFinite,
 } from "./runtime.ts";
 ```
@@ -724,13 +720,17 @@ const json = await readJsonObject(res);
 if (!json) { ... }
 ```
 
+### Timeout semantics change
+
+Previously all 3 parallel fetches shared a single 5s timeout. After: each gets its own 5s budget. Since they run in parallel via `Promise.all`, the effective total wait is still ~5s (the slowest of the three), so practical behavior is unchanged.
+
 ### Verification
 
 ```bash
 pnpm check
 ```
 
-All 6 `provider-command-code.test.ts` tests must pass unchanged.
+All 5 `provider-command-code.test.ts` tests must pass unchanged.
 
 ### Commit
 
@@ -743,7 +743,7 @@ Net -10 lines.
 
 ---
 
-## Task 10 — Migrate opencode-go.ts
+## Task 9 — Migrate opencode-go.ts
 
 ### What
 
@@ -783,13 +783,23 @@ import {
 // REMOVE per-iteration:
 const timeout = new AbortController();
 const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
+const combined = signal
+  ? AbortSignal.any([signal, timeout.signal])
+  : timeout.signal;
 let res: Response;
 try {
-  res = await deps.fetch(url, { ..., signal: combined });
+  res = await deps.fetch(url, {
+    method: "GET",
+    redirect: "manual",
+    headers: {
+      Cookie: cookieHeader,
+      "User-Agent": "...",
+    },
+    signal: combined,
+  });
 } catch {
   deps.clearTimeout(timer);
-  return { diagnostic: "..." };
+  return { diagnostic: "OpenCode Go dashboard network unavailable." };
 }
 deps.clearTimeout(timer);
 ```
@@ -802,7 +812,11 @@ try {
   res = await fetchWithTimeout(deps, url, {
     method: "GET",
     redirect: "manual",
-    headers: { Cookie: cookieHeader, "User-Agent": "..." },
+    headers: {
+      Cookie: cookieHeader,
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/137 Safari/537.36",
+    },
     signal,
   });
 } catch {
@@ -810,26 +824,32 @@ try {
 }
 ```
 
+### Behavioral preservation notes
+
+- `clampPercent` (no rounding) preserves fractional values like `12.4` from dashboard regex extraction. The test at `provider-opencode-go.test.ts:140` asserts `[12.4, 50, 75]`.
+- `Math.floor(clampPercent((used / limit) * 100))` in the `mk` helper (line 499) preserves the existing floor-then-clamp behavior since `clampPercent` doesn't round.
+
 ### Verification
 
 ```bash
 pnpm check
 ```
 
-All 10 `provider-opencode-go.test.ts` tests must pass unchanged.
+All 9 `provider-opencode-go.test.ts` tests must pass unchanged.
 
 ### Commit
 
 ```
 refactor(opencode-go): use runtime utilities
 
-Replaces local clampPct and timeout wiring with shared imports.
+Replaces local clampPct, toNumber, parseTs, and timeout wiring with
+shared imports from runtime.ts.
 Net -12 lines.
 ```
 
 ---
 
-## Task 11 — Final verification and cleanup
+## Task 10 — Final verification and cleanup
 
 ### What
 
@@ -857,7 +877,11 @@ pnpm check
 grep -r "new AbortController" src/providers/ --include="*.ts" | grep -v runtime.ts
 grep -r "AbortSignal.any" src/providers/ --include="*.ts" | grep -v runtime.ts
 grep -r "\.json()\.catch" src/providers/ --include="*.ts" | grep -v runtime.ts
-grep -r "clampPct\|clampPercent" src/providers/opencode-go.ts
+
+# Verify no local function definitions remain (should return 0 matches):
+grep -n "^function clampPct\|^function toNumber\|^function parseTs" src/providers/opencode-go.ts
+grep -n "^function clampPercent" src/providers/minimax.ts src/providers/stepfun.ts
+grep -n "^async function readJsonObject" src/providers/stepfun.ts
 ```
 
 ### Final Commit
@@ -877,15 +901,14 @@ boilerplate remains in provider files.
 | ---- | --------------- | --------- | ---- |
 | 1    | runtime.ts      | +15       | None |
 | 2    | runtime.ts      | +10       | None |
-| 3    | runtime.ts      | +4        | None |
-| 4    | runtime.ts      | +18       | None |
-| 5    | openai-codex.ts | -12       | Low  |
-| 6    | openrouter.ts   | -20       | Low  |
-| 7    | minimax.ts      | -15       | Low  |
-| 8    | stepfun.ts      | -18       | Low  |
-| 9    | command-code.ts | -10       | Low  |
-| 10   | opencode-go.ts  | -12       | Low  |
-| 11   | Verification    | 0         | None |
+| 3    | runtime.ts      | +8        | None |
+| 4    | openai-codex.ts | -10       | Low  |
+| 5    | openrouter.ts   | -20       | Low  |
+| 6    | minimax.ts      | -15       | Low  |
+| 7    | stepfun.ts      | -18       | Low  |
+| 8    | command-code.ts | -10       | Low  |
+| 9    | opencode-go.ts  | -12       | Low  |
+| 10   | Verification    | 0         | None |
 
-**Total net change:** ~-40 lines removed from providers, +47 lines added to runtime.ts and tests.
-**New test file:** `tests/runtime-utilities.test.ts` (~80 lines)
+**Total net change:** ~-52 lines removed from providers, +33 lines added to runtime.ts and tests.
+**New test file:** `tests/runtime-utilities.test.ts` (~90 lines)
