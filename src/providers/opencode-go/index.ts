@@ -24,6 +24,10 @@ export {
   normalizeWorkspaceId,
 } from "./dashboard-scraper.ts";
 
+/**
+ * Build a usage snapshot by trying the live dashboard first, falling back to
+ * SQLite + Pi offline logs for a local estimate.
+ */
 export async function buildOpenCodeGoSnapshot(
   deps: UsageDeps,
   now: number,
@@ -132,6 +136,7 @@ export async function buildOpenCodeGoSnapshot(
   };
 }
 
+/** Create the OpenCode Go provider adapter with caching, locking, and backoff. */
 export function createOpenCodeGoProvider(
   deps: UsageDeps,
 ): UsageProviderAdapter {

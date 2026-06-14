@@ -2,6 +2,7 @@ import type { UsageDeps } from "../../shared/deps.ts";
 import type { LiveUsageWindow } from "../../shared/types.ts";
 import { clampPercent, fetchWithTimeout } from "../runtime.ts";
 
+/** Extract a valid `wrk_*` workspace ID from a raw string or dashboard URL. */
 export function normalizeWorkspaceId(raw: string): string | undefined {
   const v = raw.trim();
   if (!v) return undefined;
@@ -17,6 +18,7 @@ export function normalizeWorkspaceId(raw: string): string | undefined {
   }
 }
 
+/** Strip a cookie header down to only the `auth` / `__Host-auth` pairs needed for the dashboard. */
 export function filterCookieHeader(raw: string): string | undefined {
   const parts = raw
     .split(";")
@@ -84,6 +86,7 @@ function parseDashboardWindows(
   return windows;
 }
 
+/** Fetch the OpenCode Go dashboard HTML and extract usage windows. Follows redirects manually. */
 export async function fetchDashboard(
   deps: UsageDeps,
   workspaceId: string,

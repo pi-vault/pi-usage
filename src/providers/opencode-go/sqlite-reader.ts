@@ -3,6 +3,7 @@ import type { UsageDeps } from "../../shared/deps.ts";
 import { parseEpochMs, toFinite } from "../runtime.ts";
 import type { CostRow } from "./types.ts";
 
+/** Resolve the path to the OpenCode SQLite database, checking env overrides and XDG paths. */
 export async function resolveOpencodeDbPath(
   deps: UsageDeps,
 ): Promise<{ path?: string; diagnostic?: string }> {
@@ -13,7 +14,7 @@ export async function resolveOpencodeDbPath(
   const override = deps.env.OPENCODE_DB?.trim();
   if (override) {
     if (override === ":memory:") {
-      return { diagnostic: "OPENCODE_DB=:memory: is unsupported." };
+      return { diagnostic: "OpenCode Go: OPENCODE_DB=:memory: is unsupported." };
     }
     return {
       path: override.startsWith("/") ? override : resolve(dataDir, override),
@@ -30,15 +31,16 @@ export async function resolveOpencodeDbPath(
       .filter((e) => e.isFile() && /^opencode-.*\.db$/.test(e.name))
       .map((e) => join(dataDir, e.name));
   } catch {
-    return { diagnostic: "OpenCode DB not found." };
+    return { diagnostic: "OpenCode Go DB not found." };
   }
   if (files.length === 1) return { path: files[0] };
   if (files.length > 1) {
-    return { diagnostic: "Multiple OpenCode DB files found. Set OPENCODE_DB." };
+    return { diagnostic: "OpenCode Go: multiple DB files found. Set OPENCODE_DB." };
   }
-  return { diagnostic: "OpenCode DB not found." };
+  return { diagnostic: "OpenCode Go DB not found." };
 }
 
+/** Read cost rows from the OpenCode SQLite database, handling both current and legacy schemas. */
 export async function collectSqliteRows(
   deps: UsageDeps,
 ): Promise<{ rows: CostRow[]; diagnostic?: string }> {
@@ -100,7 +102,7 @@ export async function collectSqliteRows(
     }
 
     if (!hasTable("message")) {
-      return { rows: [], diagnostic: "OpenCode SQLite schema unsupported." };
+      return { rows: [], diagnostic: "OpenCode Go SQLite schema unsupported." };
     }
     const legacy = db
       .prepare("select id, data, time_created from message")
@@ -164,7 +166,7 @@ export async function collectSqliteRows(
           : undefined,
     };
   } catch {
-    return { rows: [], diagnostic: "OpenCode SQLite unavailable." };
+    return { rows: [], diagnostic: "OpenCode Go SQLite unavailable." };
   } finally {
     db?.close();
   }

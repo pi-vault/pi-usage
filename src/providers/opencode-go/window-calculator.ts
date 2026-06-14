@@ -2,6 +2,7 @@ import type { UsageDeps } from "../../shared/deps.ts";
 import { scanOfflineUsage } from "../../core/offline.ts";
 import type { CostRow } from "./types.ts";
 
+/** Return the epoch-ms of the most recent Monday 00:00 UTC on or before `now`. */
 export function utcMondayStart(now: number): number {
   const d = new Date(now);
   const day = (d.getUTCDay() + 6) % 7;
@@ -13,6 +14,7 @@ export function utcMondayStart(now: number): number {
   return midnight - day * 24 * 3600 * 1000;
 }
 
+/** Compute the current monthly billing window anchored to the day-of-month of the earliest row. */
 export function anchoredMonthWindow(
   now: number,
   anchor: number,
@@ -42,6 +44,7 @@ export function anchoredMonthWindow(
   return { start, end };
 }
 
+/** Sum cost in the most recent 5-hour bucket and return the bucket's reset time. */
 export function rolling5h(
   rows: CostRow[],
   now: number,
@@ -62,6 +65,7 @@ export function rolling5h(
   return { used: bucketSum, resetAt: end };
 }
 
+/** Collect cost rows from Pi's offline session logs for the opencode-go provider. */
 export async function collectPiRows(deps: UsageDeps): Promise<CostRow[]> {
   const result = await scanOfflineUsage(deps);
   return result.turns

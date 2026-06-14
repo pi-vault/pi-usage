@@ -1,10 +1,33 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createDefaultDeps } from "../src/shared/deps.ts";
 import {
   anchoredMonthWindow,
+  collectPiRows,
   rolling5h,
   utcMondayStart,
 } from "../src/providers/opencode-go/window-calculator.ts";
 import type { CostRow } from "../src/providers/opencode-go/types.ts";
+
+function mkTmp(): string {
+  return mkdtempSync(join(tmpdir(), "pi-usage-wincalc-"));
+}
+
+function piRow(timestamp: string, cost: number, provider = "opencode-go"): string {
+  return JSON.stringify({
+    type: "message",
+    id: `row-${Date.now()}-${Math.random()}`,
+    timestamp,
+    message: {
+      role: "assistant",
+      provider,
+      model: "glm",
+      usage: { cost: { total: cost } },
+    },
+  });
+}
 
 describe("window-calculator", () => {
   describe("utcMondayStart", () => {
@@ -79,6 +102,54 @@ describe("window-calculator", () => {
       const anchor = Date.UTC(2025, 4, 20, 0, 0, 0); // May 20 (anchor day=20 > current day=5)
       const result = anchoredMonthWindow(now, anchor);
       expect(result.start).toBeLessThan(now);
+    });
+  });
+
+  describe("collectPiRows", () => {
+    it("returns opencode-go rows with positive cost", async () => {
+      const root = mkTmp();
+      const sessions = join(root, "sessions");
+      mkdirSync(sessions, { recursive: true });
+      writeFileSync(
+        join(sessions, "pi.jsonl"),
+        `${[
+          piRow("2026-06-01T10:00:00Z", 2.5),
+          piRow("2026-06-01T11:00:00Z", 1.0),
+        ].join("\n")}\n`,
+      );
+      const deps = { ...createDefaultDeps(), agentDir: () => root };
+      const rows = await collectPiRows(deps);
+      expect(rows).toHaveLength(2);
+      expect(rows[0].cost).toBe(2.5);
+      expect(rows[1].cost).toBe(1.0);
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("filters out non-opencode-go providers and zero-cost rows", async () => {
+      const root = mkTmp();
+      const sessions = join(root, "sessions");
+      mkdirSync(sessions, { recursive: true });
+      writeFileSync(
+        join(sessions, "pi.jsonl"),
+        `${[
+          piRow("2026-06-01T10:00:00Z", 3.0, "openai-codex"),
+          piRow("2026-06-01T11:00:00Z", 0, "opencode-go"),
+          piRow("2026-06-01T12:00:00Z", 1.5, "opencode-go"),
+        ].join("\n")}\n`,
+      );
+      const deps = { ...createDefaultDeps(), agentDir: () => root };
+      const rows = await collectPiRows(deps);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].cost).toBe(1.5);
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("returns empty array when no sessions directory exists", async () => {
+      const root = mkTmp();
+      const deps = { ...createDefaultDeps(), agentDir: () => root };
+      const rows = await collectPiRows(deps);
+      expect(rows).toEqual([]);
+      rmSync(root, { recursive: true, force: true });
     });
   });
 });
