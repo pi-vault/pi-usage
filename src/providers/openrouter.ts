@@ -5,7 +5,13 @@ import type {
   ProviderBalance,
   UsageProviderAdapter,
 } from "../shared/types.ts";
-import { fetchWithLiveRuntime, retryAfterMs, toFinite } from "./runtime.ts";
+import {
+  fetchWithLiveRuntime,
+  fetchWithTimeout,
+  readJsonObject,
+  retryAfterMs,
+  toFinite,
+} from "./runtime.ts";
 
 function resolveBaseUrl(env: NodeJS.ProcessEnv): string {
   const raw = env.OPENROUTER_API_URL?.trim();
@@ -44,27 +50,19 @@ async function fetchCredits(
   | { kind: "credentials" }
   | { kind: "error"; message: string }
 > {
-  const timeout = new AbortController();
-  const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, timeout.signal])
-    : timeout.signal;
-
   let response: Response;
   try {
-    response = await deps.fetch(`${baseUrl}/api/v1/credits`, {
+    response = await fetchWithTimeout(deps, `${baseUrl}/api/v1/credits`, {
       method: "GET",
       headers,
-      signal: combinedSignal,
+      signal,
     });
   } catch {
-    deps.clearTimeout(timer);
     return {
       kind: "error",
       message: "OpenRouter credits endpoint unavailable.",
     };
   }
-  deps.clearTimeout(timer);
 
   if (response.status === 429) {
     return {
@@ -84,16 +82,15 @@ async function fetchCredits(
     };
   }
 
-  const json = await response.json().catch(() => undefined);
-  if (!json || typeof json !== "object") {
+  const json = await readJsonObject(response);
+  if (!json) {
     return { kind: "error", message: "OpenRouter credits response malformed." };
   }
 
-  const wrapper = json as Record<string, unknown>;
   const data =
-    wrapper.data && typeof wrapper.data === "object"
-      ? (wrapper.data as Record<string, unknown>)
-      : wrapper;
+    json.data && typeof json.data === "object"
+      ? (json.data as Record<string, unknown>)
+      : json;
   const totalCredits = toFinite(data.total_credits);
   const totalUsage = toFinite(data.total_usage);
 
@@ -119,39 +116,30 @@ async function fetchKey(
     }
   | { kind: "error" }
 > {
-  const timeout = new AbortController();
-  const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, timeout.signal])
-    : timeout.signal;
-
   let response: Response;
   try {
-    response = await deps.fetch(`${baseUrl}/api/v1/key`, {
+    response = await fetchWithTimeout(deps, `${baseUrl}/api/v1/key`, {
       method: "GET",
       headers,
-      signal: combinedSignal,
+      signal,
     });
   } catch {
-    deps.clearTimeout(timer);
     return { kind: "error" };
   }
-  deps.clearTimeout(timer);
 
   if (!response.ok) {
     return { kind: "error" };
   }
 
-  const json = await response.json().catch(() => undefined);
-  if (!json || typeof json !== "object") {
+  const json = await readJsonObject(response);
+  if (!json) {
     return { kind: "error" };
   }
 
-  const wrapper = json as Record<string, unknown>;
   const data =
-    wrapper.data && typeof wrapper.data === "object"
-      ? (wrapper.data as Record<string, unknown>)
-      : wrapper;
+    json.data && typeof json.data === "object"
+      ? (json.data as Record<string, unknown>)
+      : json;
 
   const limit = toFinite(data.limit);
   const usage = toFinite(data.usage);

@@ -1,7 +1,17 @@
 import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../shared/constants.ts";
 import type { UsageDeps } from "../shared/deps.ts";
-import type { LiveUsageWindow, ProviderUsageSnapshot, UsageProviderAdapter } from "../shared/types.ts";
-import { fetchWithLiveRuntime, retryAfterMs, toFinite } from "./runtime.ts";
+import type {
+  LiveUsageWindow,
+  ProviderUsageSnapshot,
+  UsageProviderAdapter,
+} from "../shared/types.ts";
+import {
+  fetchWithLiveRuntime,
+  fetchWithTimeout,
+  readJsonObject,
+  retryAfterMs,
+  toFinite,
+} from "./runtime.ts";
 
 function normalizeCookieHeader(raw: string | undefined): string | undefined {
   const input = raw?.trim();
@@ -23,17 +33,25 @@ function normalizeCookieHeader(raw: string | undefined): string | undefined {
     if (found?.slice(name.length + 1).trim()) return found;
   }
 
-  if (parts.length === 1 && !parts[0].includes("=") && !/[\s,]/.test(parts[0])) {
+  if (
+    parts.length === 1 &&
+    !parts[0].includes("=") &&
+    !/[\s,]/.test(parts[0])
+  ) {
     return `__Secure-commandcode_prod_.session_token=${parts[0]}`;
   }
   return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
-export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter {
+export function createCommandCodeProvider(
+  deps: UsageDeps,
+): UsageProviderAdapter {
   return {
     id: "command-code",
     label: PROVIDER_LABELS["command-code"],
@@ -55,11 +73,6 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
               };
             }
 
-            const timeout = new AbortController();
-            const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-            const combinedSignal = signal
-              ? AbortSignal.any([signal, timeout.signal])
-              : timeout.signal;
             const headers = {
               Cookie: cookie,
               Accept: "application/json, text/plain, */*",
@@ -73,19 +86,31 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
             const diagnostics: string[] = [];
             const request = async (url: string, label: string) => {
               try {
-                return await deps.fetch(url, { headers, signal: combinedSignal });
+                return await fetchWithTimeout(deps, url, { headers, signal });
               } catch {
                 diagnostics.push(`${label} endpoint unavailable.`);
                 return undefined;
               }
             };
             const [summaryRes, creditsRes, subsRes] = await Promise.all([
-              request("https://api.commandcode.ai/internal/usage/summary", "Summary"),
-              request("https://api.commandcode.ai/internal/billing/credits", "Credits"),
-              request("https://api.commandcode.ai/internal/billing/subscriptions", "Subscription"),
-            ]).finally(() => deps.clearTimeout(timer));
+              request(
+                "https://api.commandcode.ai/internal/usage/summary",
+                "Summary",
+              ),
+              request(
+                "https://api.commandcode.ai/internal/billing/credits",
+                "Credits",
+              ),
+              request(
+                "https://api.commandcode.ai/internal/billing/subscriptions",
+                "Subscription",
+              ),
+            ]);
 
-            const readJson = async (res: Response | undefined, label: string) => {
+            const readJson = async (
+              res: Response | undefined,
+              label: string,
+            ) => {
               if (!res) return undefined;
               if (res.status === 401 || res.status === 403) {
                 diagnostics.push(`${label} rejected the Command Code session.`);
@@ -99,12 +124,12 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
                 diagnostics.push(`${label} endpoint unavailable.`);
                 return undefined;
               }
-              const json = await res.json().catch(() => undefined);
-              if (!json || typeof json !== "object") {
+              const json = await readJsonObject(res);
+              if (!json) {
                 diagnostics.push(`${label} response shape unsupported.`);
                 return undefined;
               }
-              return json as Record<string, unknown>;
+              return json;
             };
 
             const summary = await readJson(summaryRes, "Summary");
@@ -122,7 +147,10 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
             const purchasedCredits = toFinite(credits?.purchasedCredits) ?? 0;
 
             const subsData = asRecord(subsPayload?.data);
-            const planId = typeof subsData?.planId === "string" ? subsData.planId : undefined;
+            const planId =
+              typeof subsData?.planId === "string"
+                ? subsData.planId
+                : undefined;
             const planName =
               planId === "individual-go"
                 ? "Go"
@@ -148,7 +176,8 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
                 used: totalCost,
                 limit,
                 unit: "USD",
-                usedPercent: limit > 0 ? Math.round((totalCost / limit) * 100) : 0,
+                usedPercent:
+                  limit > 0 ? Math.round((totalCost / limit) * 100) : 0,
                 resetAt: Number.isFinite(resetAt) ? resetAt : undefined,
               });
             } else if (totalCost != null) {
@@ -171,19 +200,52 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
             }
 
             const balances = [] as ProviderUsageSnapshot["balances"];
-            if (monthlyCredits != null) balances.push({ label: "Monthly remaining", remaining: monthlyCredits, unit: "USD" });
-            if (purchasedCredits > 0) balances.push({ label: "Purchased remaining", remaining: purchasedCredits, unit: "USD" });
-            if (totalCount != null) balances.push({ label: "Requests", remaining: totalCount, unit: "count" });
+            if (monthlyCredits != null)
+              balances.push({
+                label: "Monthly remaining",
+                remaining: monthlyCredits,
+                unit: "USD",
+              });
+            if (purchasedCredits > 0)
+              balances.push({
+                label: "Purchased remaining",
+                remaining: purchasedCredits,
+                unit: "USD",
+              });
+            if (totalCount != null)
+              balances.push({
+                label: "Requests",
+                remaining: totalCount,
+                unit: "count",
+              });
             if (totalTokens != null) {
-              balances.push({ label: "Tokens", remaining: totalTokens, unit: "tok" });
+              balances.push({
+                label: "Tokens",
+                remaining: totalTokens,
+                unit: "tok",
+              });
             } else if (totalTokensIn != null || totalTokensOut != null) {
-              if (totalTokensIn != null) balances.push({ label: "Tokens in", remaining: totalTokensIn, unit: "tok" });
-              if (totalTokensOut != null) balances.push({ label: "Tokens out", remaining: totalTokensOut, unit: "tok" });
+              if (totalTokensIn != null)
+                balances.push({
+                  label: "Tokens in",
+                  remaining: totalTokensIn,
+                  unit: "tok",
+                });
+              if (totalTokensOut != null)
+                balances.push({
+                  label: "Tokens out",
+                  remaining: totalTokensOut,
+                  unit: "tok",
+                });
             }
 
             if (windows.length === 0 && balances.length === 0) {
-              const primaryResponses = [summaryRes, creditsRes].filter((res): res is Response => Boolean(res));
-              const rateLimited = primaryResponses.find((res) => res.status === 429);
+              const primaryResponses = [summaryRes, creditsRes].filter(
+                (res): res is Response => Boolean(res),
+              );
+              const rateLimited = primaryResponses.find(
+                (res) => res.status === 429,
+              );
               if (rateLimited) {
                 return {
                   kind: "rate-limited" as const,
@@ -191,13 +253,21 @@ export function createCommandCodeProvider(deps: UsageDeps): UsageProviderAdapter
                   nextRetryAt: now + retryAfterMs(rateLimited.headers, now),
                 };
               }
-              if (primaryResponses.some((res) => res.status === 401 || res.status === 403)) {
+              if (
+                primaryResponses.some(
+                  (res) => res.status === 401 || res.status === 403,
+                )
+              ) {
                 return {
                   kind: "credentials" as const,
-                  message: "Command Code session expired. Update COMMAND_CODE_COOKIE_HEADER.",
+                  message:
+                    "Command Code session expired. Update COMMAND_CODE_COOKIE_HEADER.",
                 };
               }
-              return { kind: "error" as const, message: diagnostics[0] ?? "Live source unavailable." };
+              return {
+                kind: "error" as const,
+                message: diagnostics[0] ?? "Live source unavailable.",
+              };
             }
 
             return {

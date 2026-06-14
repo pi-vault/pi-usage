@@ -2,8 +2,11 @@ import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../shared/constants.ts";
 import type { UsageDeps } from "../shared/deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../shared/types.ts";
 import {
+  clampPercentRounded,
   fetchWithLiveRuntime,
+  fetchWithTimeout,
   parseEpochMs,
+  readJsonObject,
   retryAfterMs,
   toFinite,
 } from "./runtime.ts";
@@ -67,10 +70,6 @@ function baseHeaders(): Record<string, string> {
   };
 }
 
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
 function buildWindow(
   key: "fiveHour" | "weekly",
   label: "5h" | "Weekly",
@@ -83,21 +82,14 @@ function buildWindow(
   return {
     key,
     label,
-    usedPercent: clampPercent((1 - left) * 100),
+    usedPercent: clampPercentRounded((1 - left) * 100),
     resetAt,
   };
 }
 
-async function readJsonObject(
-  res: Response,
-): Promise<Record<string, unknown> | undefined> {
-  const data = await res.json().catch(() => undefined);
-  return data && typeof data === "object"
-    ? (data as Record<string, unknown>)
-    : undefined;
-}
-
-function tokenFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+function tokenFromPayload(
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
   const accessToken =
     payload?.accessToken && typeof payload.accessToken === "object"
       ? (payload.accessToken as Record<string, unknown>)
@@ -107,7 +99,9 @@ function tokenFromPayload(payload: Record<string, unknown> | undefined): string 
     : undefined;
 }
 
-function isStepFunCredentialError(error: unknown): error is StepFunCredentialError {
+function isStepFunCredentialError(
+  error: unknown,
+): error is StepFunCredentialError {
   return error instanceof StepFunCredentialError;
 }
 
@@ -117,7 +111,7 @@ async function loginStepFun(
   password: string,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  const landing = await deps.fetch(STEPFUN_BASE_URL, {
+  const landing = await fetchWithTimeout(deps, STEPFUN_BASE_URL, {
     method: "GET",
     headers: baseHeaders(),
     signal,
@@ -129,7 +123,8 @@ async function loginStepFun(
     throw new StepFunCredentialError();
   }
 
-  const registerRes = await deps.fetch(
+  const registerRes = await fetchWithTimeout(
+    deps,
     `${STEPFUN_BASE_URL}/passport/proto.api.passport.v1.PassportService/RegisterDevice`,
     {
       method: "POST",
@@ -146,7 +141,8 @@ async function loginStepFun(
     throw new StepFunCredentialError();
   }
 
-  const loginRes = await deps.fetch(
+  const loginRes = await fetchWithTimeout(
+    deps,
     `${STEPFUN_BASE_URL}/passport/proto.api.passport.v1.PassportService/SignInByPassword`,
     {
       method: "POST",
@@ -181,7 +177,8 @@ async function fetchStepFunUsage(
     Cookie: `Oasis-Token=${token}; Oasis-Webid=${STEPFUN_WEB_ID}`,
   };
 
-  const usageRes = await deps.fetch(
+  const usageRes = await fetchWithTimeout(
+    deps,
     `${STEPFUN_BASE_URL}/api/step.openapi.devcenter.Dashboard/QueryStepPlanRateLimit`,
     {
       method: "POST",
@@ -229,7 +226,8 @@ async function fetchStepFunUsage(
   }
 
   let planName: string | undefined;
-  const planRes = await deps.fetch(
+  const planRes = await fetchWithTimeout(
+    deps,
     `${STEPFUN_BASE_URL}/api/step.openapi.devcenter.Dashboard/GetStepPlanStatus`,
     {
       method: "POST",
@@ -263,35 +261,56 @@ export function createStepFunProvider(deps: UsageDeps): UsageProviderAdapter {
         {
           id: "stepfun",
           fetchLive: async ({ now, signal }) => {
-            const timeout = new AbortController();
-            const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-            const combinedSignal = signal
-              ? AbortSignal.any([signal, timeout.signal])
-              : timeout.signal;
+            const auth = resolveStepFunAuth(deps.env);
+            if (!auth) {
+              return {
+                kind: "credentials" as const,
+                message:
+                  "Missing StepFun credentials. Set STEPFUN_TOKEN or STEPFUN_USERNAME and STEPFUN_PASSWORD.",
+              };
+            }
 
+            let token: string;
             try {
-              const auth = resolveStepFunAuth(deps.env);
-              if (!auth) {
+              token =
+                auth.kind === "token"
+                  ? auth.token
+                  : await loginStepFun(
+                      deps,
+                      auth.username,
+                      auth.password,
+                      signal,
+                    );
+            } catch (error) {
+              if (auth.kind === "password" && isStepFunCredentialError(error)) {
                 return {
                   kind: "credentials" as const,
-                  message:
-                    "Missing StepFun credentials. Set STEPFUN_TOKEN or STEPFUN_USERNAME and STEPFUN_PASSWORD.",
+                  message: INVALID_STEPFUN_CREDENTIALS,
                 };
               }
+              throw error;
+            }
 
-              let token: string;
+            let usage = await fetchStepFunUsage(deps, token, signal);
+            if (usage.kind === "rate-limited") {
+              return {
+                kind: "rate-limited" as const,
+                message: "Rate limited.",
+                nextRetryAt: usage.retryAt,
+              };
+            }
+
+            if (usage.kind === "credentials" && auth.kind === "password") {
+              let retryToken: string;
               try {
-                token =
-                  auth.kind === "token"
-                    ? auth.token
-                    : await loginStepFun(
-                        deps,
-                        auth.username,
-                        auth.password,
-                        combinedSignal,
-                      );
+                retryToken = await loginStepFun(
+                  deps,
+                  auth.username,
+                  auth.password,
+                  signal,
+                );
               } catch (error) {
-                if (auth.kind === "password" && isStepFunCredentialError(error)) {
+                if (isStepFunCredentialError(error)) {
                   return {
                     kind: "credentials" as const,
                     message: INVALID_STEPFUN_CREDENTIALS,
@@ -299,80 +318,49 @@ export function createStepFunProvider(deps: UsageDeps): UsageProviderAdapter {
                 }
                 throw error;
               }
-
-              let usage = await fetchStepFunUsage(deps, token, combinedSignal);
-              if (usage.kind === "rate-limited") {
-                return {
-                  kind: "rate-limited" as const,
-                  message: "Rate limited.",
-                  nextRetryAt: usage.retryAt,
-                };
-              }
-
-              if (usage.kind === "credentials" && auth.kind === "password") {
-                let retryToken: string;
-                try {
-                  retryToken = await loginStepFun(
-                    deps,
-                    auth.username,
-                    auth.password,
-                    combinedSignal,
-                  );
-                } catch (error) {
-                  if (isStepFunCredentialError(error)) {
-                    return {
-                      kind: "credentials" as const,
-                      message: INVALID_STEPFUN_CREDENTIALS,
-                    };
-                  }
-                  throw error;
-                }
-                usage = await fetchStepFunUsage(deps, retryToken, combinedSignal);
-              }
-
-              if (usage.kind === "credentials") {
-                return {
-                  kind: "credentials" as const,
-                  message:
-                    auth.kind === "token"
-                      ? "Invalid StepFun token. Refresh STEPFUN_TOKEN."
-                      : "Invalid StepFun credentials.",
-                };
-              }
-
-              if (usage.kind === "rate-limited") {
-                return {
-                  kind: "rate-limited" as const,
-                  message: "Rate limited.",
-                  nextRetryAt: usage.retryAt,
-                };
-              }
-
-              if (usage.kind === "error") {
-                return { kind: "error" as const, message: usage.message };
-              }
-
-              return {
-                kind: "ok" as const,
-                snapshot: {
-                  providerId: "stepfun",
-                  providerLabel: PROVIDER_LABELS.stepfun,
-                  available: true,
-                  diagnostic: "",
-                  fetchedAt: now,
-                  expiresAt: now + PROVIDER_TTLS_MS.stepfun,
-                  balances: [],
-                  status: "live",
-                  sourceLabel: "StepFun rate limit API",
-                  sourceKind: "live",
-                  windows: usage.windows,
-                  diagnostics: [],
-                  planName: usage.planName,
-                },
-              };
-            } finally {
-              deps.clearTimeout(timer);
+              usage = await fetchStepFunUsage(deps, retryToken, signal);
             }
+
+            if (usage.kind === "credentials") {
+              return {
+                kind: "credentials" as const,
+                message:
+                  auth.kind === "token"
+                    ? "Invalid StepFun token. Refresh STEPFUN_TOKEN."
+                    : "Invalid StepFun credentials.",
+              };
+            }
+
+            if (usage.kind === "rate-limited") {
+              return {
+                kind: "rate-limited" as const,
+                message: "Rate limited.",
+                nextRetryAt: usage.retryAt,
+              };
+            }
+
+            if (usage.kind === "error") {
+              return { kind: "error" as const, message: usage.message };
+            }
+
+            return {
+              kind: "ok" as const,
+              snapshot: {
+                providerId: "stepfun",
+                providerLabel: PROVIDER_LABELS.stepfun,
+                available: true,
+                diagnostic: "",
+                fetchedAt: now,
+                expiresAt: now + PROVIDER_TTLS_MS.stepfun,
+                balances: [],
+                status: "live",
+                sourceLabel: "StepFun rate limit API",
+                sourceKind: "live",
+                windows: usage.windows,
+                diagnostics: [],
+                planName: usage.planName,
+              },
+            };
           },
         },
         input,

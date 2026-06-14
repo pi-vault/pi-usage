@@ -152,6 +152,51 @@ export function parseDurationMs(value: unknown): number | undefined {
   return n >= 60_000 ? Math.round(n) : Math.round(n * 1000);
 }
 
+/** Clamp a percentage to [0, 100]. Preserves fractional values. */
+export function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+/** Clamp a percentage to [0, 100] and round to the nearest integer. */
+export function clampPercentRounded(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+/**
+ * Fetch with a per-request timeout, combining an optional external signal.
+ * Replaces the 5-line AbortController/timer/combinedSignal pattern in every provider.
+ */
+export async function fetchWithTimeout(
+  deps: UsageDeps,
+  url: string,
+  options: RequestInit & { signal?: AbortSignal },
+  timeoutMs = 5_000,
+): Promise<Response> {
+  const timeout = new AbortController();
+  const timer = deps.setTimeout(() => timeout.abort(), timeoutMs);
+  const combinedSignal = options.signal
+    ? AbortSignal.any([options.signal, timeout.signal])
+    : timeout.signal;
+  try {
+    return await deps.fetch(url, { ...options, signal: combinedSignal });
+  } finally {
+    deps.clearTimeout(timer);
+  }
+}
+
+/**
+ * Safely parse a Response body as a JSON object.
+ * Returns undefined if parsing fails or the result is not a plain object.
+ */
+export async function readJsonObject(
+  res: Response,
+): Promise<Record<string, unknown> | undefined> {
+  const data = await res.json().catch(() => undefined);
+  return data && typeof data === "object" && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : undefined;
+}
+
 type LiveRuntimeConfig = {
   id: Extract<
     ProviderId,

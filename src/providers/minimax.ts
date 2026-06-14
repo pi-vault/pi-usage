@@ -2,8 +2,11 @@ import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../shared/constants.ts";
 import type { UsageDeps } from "../shared/deps.ts";
 import type { LiveUsageWindow, UsageProviderAdapter } from "../shared/types.ts";
 import {
+  clampPercentRounded,
   fetchWithLiveRuntime,
+  fetchWithTimeout,
   parseEpochMs,
+  readJsonObject,
   retryAfterMs,
   toFinite,
 } from "./runtime.ts";
@@ -29,10 +32,6 @@ function objectFrom(
       return value as Record<string, unknown>;
   }
   return undefined;
-}
-
-function clampPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parseDateLike(value: unknown): number | undefined {
@@ -134,7 +133,7 @@ function normalizeTokenWindow(
       used: boundedUsed,
       limit,
       unit: "credits",
-      usedPercent: clampPercent((boundedUsed / limit) * 100),
+      usedPercent: clampPercentRounded((boundedUsed / limit) * 100),
       resetAt,
     };
   }
@@ -151,7 +150,7 @@ function normalizeTokenWindow(
   return {
     key,
     label,
-    usedPercent: clampPercent(percent),
+    usedPercent: clampPercentRounded(percent),
     resetAt,
   };
 }
@@ -199,7 +198,7 @@ function windowFromRemainsRow(
       used: boundedUsed,
       limit: total,
       unit: "credits",
-      usedPercent: clampPercent((boundedUsed / total) * 100),
+      usedPercent: clampPercentRounded((boundedUsed / total) * 100),
       resetAt,
     };
   }
@@ -210,7 +209,7 @@ function windowFromRemainsRow(
   return {
     key,
     label: config.label,
-    usedPercent: clampPercent(100 - remainingPercent),
+    usedPercent: clampPercentRounded(100 - remainingPercent),
     resetAt,
   };
 }
@@ -362,25 +361,17 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
             const chinaHost = "https://api.minimaxi.com";
             const endpoint = "/v1/token_plan/remains";
 
-            const request = async (baseHost: string) => {
-              const timeout = new AbortController();
-              const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-              const combinedSignal = signal
-                ? AbortSignal.any([signal, timeout.signal])
-                : timeout.signal;
-              return deps
-                .fetch(`${baseHost}${endpoint}`, {
-                  method: "GET",
-                  headers: {
-                    Authorization: `Bearer ${token}`,
-                    Accept: "application/json",
-                    "Content-Type": "application/json",
-                    "MM-API-Source": "pi-coding-agent",
-                  },
-                  signal: combinedSignal,
-                })
-                .finally(() => deps.clearTimeout(timer));
-            };
+            const request = async (baseHost: string) =>
+              fetchWithTimeout(deps, `${baseHost}${endpoint}`, {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                  "MM-API-Source": "pi-coding-agent",
+                },
+                signal,
+              });
 
             let res = await request(host);
             let fallbackUsed = false;
@@ -415,9 +406,7 @@ export function createMiniMaxProvider(deps: UsageDeps): UsageProviderAdapter {
                 kind: "error" as const,
                 message: "Live source unavailable.",
               };
-            const data = (await res.json().catch(() => undefined)) as
-              | Record<string, unknown>
-              | undefined;
+            const data = await readJsonObject(res);
             if (!data)
               return {
                 kind: "error" as const,

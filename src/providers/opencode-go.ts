@@ -7,28 +7,15 @@ import type {
   ProviderUsageSnapshot,
   UsageProviderAdapter,
 } from "../shared/types.ts";
-import { fetchWithLiveRuntime } from "./runtime.ts";
+import {
+  clampPercent,
+  fetchWithLiveRuntime,
+  fetchWithTimeout,
+  parseEpochMs,
+  toFinite,
+} from "./runtime.ts";
 
 type CostRow = { ts: number; cost: number };
-
-function toNumber(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v.trim());
-    if (Number.isFinite(n)) return n;
-  }
-  return undefined;
-}
-
-function parseTs(v: unknown): number | undefined {
-  const n = toNumber(v);
-  if (!n) return undefined;
-  return n > 1e12 ? Math.round(n) : Math.round(n * 1000);
-}
-
-function clampPct(n: number): number {
-  return Math.max(0, Math.min(100, n));
-}
 
 export function normalizeWorkspaceId(raw: string): string | undefined {
   const v = raw.trim();
@@ -91,13 +78,13 @@ function parseDashboardWindows(
     {
       key: "fiveHour",
       label: "5h",
-      usedPercent: clampPct(rolling[0]),
+      usedPercent: clampPercent(rolling[0]),
       resetAt: addSecs(now, rolling[1]),
     },
     {
       key: "weekly",
       label: "Weekly",
-      usedPercent: clampPct(weekly[0]),
+      usedPercent: clampPercent(weekly[0]),
       resetAt: addSecs(now, weekly[1]),
     },
   ];
@@ -105,7 +92,7 @@ function parseDashboardWindows(
     windows.push({
       key: "monthly",
       label: "Monthly",
-      usedPercent: clampPct(monthly[0]),
+      usedPercent: clampPercent(monthly[0]),
       resetAt: addSecs(now, monthly[1]),
     });
   }
@@ -121,14 +108,9 @@ async function fetchDashboard(
   let url = `https://opencode.ai/workspace/${workspaceId}/go`;
   const maxRedirects = 3;
   for (let i = 0; i <= maxRedirects; i += 1) {
-    const timeout = new AbortController();
-    const timer = deps.setTimeout(() => timeout.abort(), 5_000);
-    const combined = signal
-      ? AbortSignal.any([signal, timeout.signal])
-      : timeout.signal;
     let res: Response;
     try {
-      res = await deps.fetch(url, {
+      res = await fetchWithTimeout(deps, url, {
         method: "GET",
         redirect: "manual",
         headers: {
@@ -136,13 +118,11 @@ async function fetchDashboard(
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/137 Safari/537.36",
         },
-        signal: combined,
+        signal,
       });
     } catch {
-      deps.clearTimeout(timer);
       return { diagnostic: "OpenCode Go dashboard network unavailable." };
     }
-    deps.clearTimeout(timer);
 
     if (res.status === 401 || res.status === 403) {
       return { diagnostic: "OpenCode Go dashboard authentication failed." };
@@ -256,9 +236,9 @@ async function collectSqliteRows(
           continue;
         }
         const model = data.model as Record<string, unknown> | undefined;
-        const cost = toNumber(data.cost);
+        const cost = toFinite(data.cost);
         const time = data.time as Record<string, unknown> | undefined;
-        const ts = parseTs(time?.created ?? row.time_created);
+        const ts = parseEpochMs(time?.created ?? row.time_created);
         if (model?.providerID === "opencode-go" && cost && cost > 0 && ts) {
           rows.push({ ts, cost });
         }
@@ -288,7 +268,7 @@ async function collectSqliteRows(
         continue;
       }
       const time = data.time as Record<string, unknown> | undefined;
-      const ts = parseTs(time?.created ?? row.time_created);
+      const ts = parseEpochMs(time?.created ?? row.time_created);
       if (
         data.role !== "assistant" ||
         data.providerID !== "opencode-go" ||
@@ -296,7 +276,7 @@ async function collectSqliteRows(
       ) {
         continue;
       }
-      const cost = toNumber(data.cost);
+      const cost = toFinite(data.cost);
       if (cost && cost > 0) {
         direct.push({ ts, cost });
       } else if (typeof row.id === "string") {
@@ -319,7 +299,7 @@ async function collectSqliteRows(
           malformed = true;
           continue;
         }
-        const cost = toNumber(data.cost);
+        const cost = toFinite(data.cost);
         if (data.type === "step-finish" && cost && cost > 0) {
           const fallback = partFallback.get(row.message_id);
           if (fallback) fallback.cost += cost;
@@ -496,7 +476,7 @@ export async function buildOpenCodeGoSnapshot(
     used,
     limit,
     unit: "USD",
-    usedPercent: Math.floor(clampPct((used / limit) * 100)),
+    usedPercent: Math.floor(clampPercent((used / limit) * 100)),
     resetAt,
   });
 
