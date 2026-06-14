@@ -5,7 +5,7 @@
 [![Node >= 22.19](https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Show aggregated Pi usage stats across your sessions — token and cost breakdowns by provider and model, plus live quota snapshots for configured providers, all from a single in-app dashboard.
+Track Pi usage across your sessions in one dashboard. `@pi-vault/pi-usage` combines offline history with live provider snapshots so you can see costs, tokens, session activity, and rolling quota status without leaving Pi.
 
 ![Pi usage dashboard showing the aggregated usage table for the "All Time" period, current usage quota bars for OpenAI/Codex, and the keyboard navigation hints at the bottom](docs/assets/dashboard-ui.png)
 
@@ -23,54 +23,45 @@ Then reload Pi:
 
 ## Commands
 
-- `/usage` — open the usage dashboard without forcing a live refresh. Use this for fast, side-effect-light inspection.
-- `/usage:refresh` — force live provider refresh, rescan local history, then open the usage dashboard. Use this when you want the latest usage data (requires providers already configured in Pi).
+- `/usage` opens the dashboard using cached live data when available. Use it for quick inspection.
+- `/usage:refresh` forces a live refresh, rescans local history, and then opens the dashboard.
 
-## Dashboard
-
-The dashboard opens in a TUI overlay over the current Pi session and is split into three bordered sections plus a footer of keyboard hints.
+## What You Get
 
 ### Usage statistics
 
-The top section is an aggregated table of all token and cost usage across your local Pi sessions.
+The top section aggregates all local Pi session history for the selected period.
 
-- **Period switching** — `Today` / `This Week` / `Last Week` / `All Time` is selectable with the arrow keys.
-- **Provider rows** — one row per provider found in your local Pi history, sorted by cost. Rows are expandable to show per-model rows.
-- **Per-row columns** — sessions, messages, cost, total tokens, input, output, cache reads, and cache writes.
-- **Total row** — a summary line at the bottom that aggregates every visible column for the active period.
+- switch between `Today`, `This Week`, `Last Week`, and `All Time`
+- expand provider rows to inspect model-level usage
+- compare sessions, messages, cost, total tokens, input, output, cache reads, and cache writes
+- keep a running total row for everything currently shown
 
 ### Current usage
 
-A live view focused on rolling-window quota bars and balances for whichever providers are already configured in Pi.
+The lower section shows live quota and balance information for providers you have already configured in Pi.
 
-- **Provider tabs** — switch between configured providers (`OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, `OpenRouter`) with `Tab` / `Shift-Tab`.
-- **Quota bars** — `5h` and weekly windows with the percentage remaining and a compact reset description.
-- **Balances** — credits/remaining balance rows for providers that report a balance (for example, OpenRouter credits and the local Command Code fallback).
-- **Live status** — each card reports whether the data is live, cached, stale, or a local-only fallback, with the cache age when relevant.
-- **Live refresh cadence** — live provider snapshots are cached for 30 minutes and background refresh checks run every 30 minutes. `/usage:refresh` still forces an immediate refresh.
+- switch between `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, and `OpenRouter`
+- view rolling-window quota bars like `5h` and weekly usage
+- see balance-style fields where the provider exposes them
+- get inline status for live, cached, stale, or fallback data
 
-### Notes
+### Keyboard shortcuts
 
-Per-provider diagnostics and caveats (e.g. live status, cache age, source) are surfaced inline so the dashboard can explain why a card is empty or showing a fallback.
+- `[Tab/Shift-Tab]` switch provider tabs
+- `[Left/Right]` switch time period
+- `[Up/Down]` move through rows
+- `[Enter/Space]` expand or collapse provider rows
+- `[v]` toggle insights
+- `[q/Esc]` close the dashboard
 
-### Keyboard navigation
+## Provider Setup
 
-- `[Tab/Shift-Tab]` — switch between providers in the current usage tabs.
-- `[Left/Right]` — change the selected period in the usage table.
-- `[Up/Down]` — move through table rows.
-- `[Enter/Space]` — expand or collapse provider rows.
-- `[v]` — toggle the insights view.
-- `[q/Esc]` — close the dashboard.
+Offline history works without extra setup. Live provider cards appear only for providers you have already configured.
 
-## Setup
+### OpenAI/Codex
 
-Offline totals always work from local Pi history. Live provider cards are shown only for providers you have already configured in Pi.
-
-### Live provider setup
-
-#### OpenAI/Codex
-
-Pi usage can reuse existing Pi or Codex auth automatically. Optional overrides:
+Pi usage can reuse existing Pi or Codex auth. Optional overrides:
 
 - `OPENAI_CODEX_OAUTH_TOKEN`
 - `OPENAI_CODEX_ACCESS_TOKEN`
@@ -79,7 +70,7 @@ Pi usage can reuse existing Pi or Codex auth automatically. Optional overrides:
 - `OPENAI_CODEX_ACCOUNT_ID`
 - `CHATGPT_ACCOUNT_ID`
 
-#### MiniMax
+### MiniMax
 
 Set one of:
 
@@ -90,29 +81,29 @@ Optional override:
 
 - `MINIMAX_API_HOST`
 
-#### StepFun
+### StepFun
 
 Set one of:
 
 - `STEPFUN_TOKEN`
 - `STEPFUN_USERNAME` and `STEPFUN_PASSWORD`
 
-#### OpenCode Go
+### OpenCode Go
 
 Set:
 
 - `OPENCODE_GO_COOKIE_HEADER`
 - `OPENCODE_GO_WORKSPACE_ID`
 
-`OPENCODE_GO_WORKSPACE_ID` may be either the raw `wrk_...` id or the full workspace URL.
+`OPENCODE_GO_WORKSPACE_ID` accepts either the raw `wrk_...` id or the full workspace URL.
 
-#### Command Code
+### Command Code
 
 Set:
 
 - `COMMAND_CODE_COOKIE_HEADER`
 
-#### OpenRouter
+### OpenRouter
 
 Set:
 
@@ -124,44 +115,10 @@ Optional overrides:
 - `OPENROUTER_X_TITLE`
 - `OPENROUTER_HTTP_REFERER`
 
-## Event API
-
-`@pi-vault/pi-usage` emits:
-
-- `usage-core:ready`
-- `usage-core:update-current`
-
-Both events send `{ state }` where `state` is a cloned `UsageCoreState` snapshot.
-
-For late subscribers, request the current snapshot via `usage-core:request`:
-
-```ts
-import {
-  USAGE_CORE_REQUEST_EVENT,
-  type UsageCorePayload,
-} from "@pi-vault/pi-usage/events";
-
-pi.events.emit(USAGE_CORE_REQUEST_EVENT, {
-  type: "current",
-  reply: ({ state }: UsageCorePayload) => {
-    // Render from latest cloned snapshot.
-  },
-});
-```
-
-## Acknowledgements
-
-This package borrows ideas from these projects for Pi UX and provider usage fetching approaches:
-
-- [tmustier/pi-extensions](https://github.com/tmustier/pi-extensions)
-- [marckrenn/pi-sub](https://github.com/marckrenn/pi-sub)
-- [steipete/CodexBar](https://github.com/steipete/CodexBar)
-
-## Development Setup
+## Development
 
 ```bash
 pnpm install
-pnpm test
 pnpm check
 pnpm pack --dry-run
 ```
