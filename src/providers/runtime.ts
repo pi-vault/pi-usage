@@ -152,6 +152,28 @@ export function parseDurationMs(value: unknown): number | undefined {
   return n >= 60_000 ? Math.round(n) : Math.round(n * 1000);
 }
 
+/**
+ * Fetch with a per-request timeout, combining an optional external signal.
+ * Replaces the 5-line AbortController/timer/combinedSignal pattern in every provider.
+ */
+export async function fetchWithTimeout(
+  deps: UsageDeps,
+  url: string,
+  options: RequestInit & { signal?: AbortSignal },
+  timeoutMs = 5_000,
+): Promise<Response> {
+  const timeout = new AbortController();
+  const timer = deps.setTimeout(() => timeout.abort(), timeoutMs);
+  const combinedSignal = options.signal
+    ? AbortSignal.any([options.signal, timeout.signal])
+    : timeout.signal;
+  try {
+    return await deps.fetch(url, { ...options, signal: combinedSignal });
+  } finally {
+    deps.clearTimeout(timer);
+  }
+}
+
 type LiveRuntimeConfig = {
   id: Extract<
     ProviderId,
