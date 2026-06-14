@@ -22,6 +22,20 @@ import {
   truncateVisible,
   wrapVisible,
 } from "./dashboard-theme.ts";
+import {
+  formatAge,
+  formatAbbrev,
+  formatCurrency,
+  formatRatio,
+  formatResetCompact,
+} from "./formatters.ts";
+import {
+  labelWidth,
+  separator,
+  tableColumns,
+  tableLine,
+  type TableColumn,
+} from "./table-layout.ts";
 
 const PERIODS: UsageWindow[] = PERIOD_ORDER;
 const PERIOD_LABELS: Record<UsageWindow, string> = {
@@ -38,59 +52,6 @@ const DEFAULT_PERIOD_INDEX = (() => {
   const idx = PERIODS.indexOf(UI_STRINGS.dashboardDefaultPeriod);
   return idx >= 0 ? idx : 0;
 })();
-
-type TableColumn = {
-  label: string;
-  width: number;
-  render: (row: AggregatedUsageRow) => string;
-};
-
-function formatAge(ageMs: number): string {
-  if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s old`;
-  return `${Math.floor(ageMs / 60_000)}m old`;
-}
-
-function formatCurrency(value: number | undefined | null): string {
-  if (value == null || !Number.isFinite(value)) return "-";
-  return `$${value.toFixed(2)}`;
-}
-
-function formatAbbrev(value: number | undefined | null): string {
-  if (value == null || !Number.isFinite(value)) return "-";
-  const n = Math.round(value);
-  if (Math.abs(n) < 1000) return `${n}`;
-  const abs = Math.abs(n);
-  const format = (v: number, suffix: string) => {
-    const digits = v >= 100 ? 0 : 1;
-    const text = v.toFixed(digits).replace(/\.0$/, "");
-    return `${n < 0 ? "-" : ""}${text}${suffix}`;
-  };
-  if (abs < 1_000_000) return format(abs / 1_000, "k");
-  if (abs < 1_000_000_000) return format(abs / 1_000_000, "M");
-  return format(abs / 1_000_000_000, "B");
-}
-
-function formatResetCompact(
-  resetAt: number | undefined,
-  now = Date.now(),
-): string {
-  if (!resetAt) return "(reset unavailable)";
-  const resetDate = new Date(resetAt);
-  const nowDate = new Date(now);
-  const hours = String(resetDate.getHours()).padStart(2, "0");
-  const minutes = String(resetDate.getMinutes()).padStart(2, "0");
-  const timeStr = `${hours}:${minutes}`;
-  const isSameDay =
-    resetDate.getFullYear() === nowDate.getFullYear() &&
-    resetDate.getMonth() === nowDate.getMonth() &&
-    resetDate.getDate() === nowDate.getDate();
-  if (isSameDay) {
-    return `(resets ${timeStr})`;
-  }
-  const monthStr = resetDate.toLocaleDateString("en-US", { month: "short" });
-  const day = resetDate.getDate();
-  return `(resets ${timeStr} on ${day} ${monthStr})`;
-}
 
 function normalizePlan(provider: ProviderUsageSnapshot): string | undefined {
   const raw = provider.planName?.trim();
@@ -114,101 +75,10 @@ function providerHeading(
   return `${name} • ${provider.status} • ${formatAge(ageMs)}`;
 }
 
-function formatRatio(
-  window: ProviderUsageSnapshot["windows"][number],
-): string | undefined {
-  if (window.used == null || window.limit == null || !window.unit) {
-    return undefined;
-  }
-  if (window.unit === "USD") {
-    return `${formatCurrency(window.used)}/${formatCurrency(window.limit)}`;
-  }
-  if (window.unit === "requests") {
-    return `${formatAbbrev(window.used)}/${formatAbbrev(window.limit)} requests`;
-  }
-  return `${formatAbbrev(window.used)}/${formatAbbrev(window.limit)} ${window.unit}`;
-}
-
 function providerDiagnostics(provider: ProviderUsageSnapshot): string[] {
   const notes = [...provider.diagnostics];
   if (provider.diagnostic) notes.unshift(provider.diagnostic);
   return [...new Set(notes.filter(Boolean))];
-}
-
-function tableColumns(width: number): TableColumn[] {
-  if (width >= 120) {
-    return [
-      { label: "Sessions", width: 8, render: (row) => `${row.sessionCount}` },
-      { label: "Msgs", width: 6, render: (row) => `${row.messageCount}` },
-      { label: "Cost", width: 8, render: (row) => formatCurrency(row.cost) },
-      { label: "Tokens", width: 7, render: (row) => formatAbbrev(row.tokens) },
-      { label: "↑In", width: 7, render: (row) => formatAbbrev(row.input) },
-      { label: "↓Out", width: 7, render: (row) => formatAbbrev(row.output) },
-      {
-        label: "CacheR",
-        width: 7,
-        render: (row) => formatAbbrev(row.cacheRead),
-      },
-      {
-        label: "CacheW",
-        width: 7,
-        render: (row) => formatAbbrev(row.cacheWrite),
-      },
-    ];
-  }
-  if (width >= 94) {
-    return [
-      { label: "Sessions", width: 8, render: (row) => `${row.sessionCount}` },
-      { label: "Msgs", width: 6, render: (row) => `${row.messageCount}` },
-      { label: "Cost", width: 8, render: (row) => formatCurrency(row.cost) },
-      { label: "Tokens", width: 7, render: (row) => formatAbbrev(row.tokens) },
-      { label: "↑In", width: 7, render: (row) => formatAbbrev(row.input) },
-      { label: "↓Out", width: 7, render: (row) => formatAbbrev(row.output) },
-    ];
-  }
-  if (width >= 72) {
-    return [
-      { label: "Sessions", width: 8, render: (row) => `${row.sessionCount}` },
-      { label: "Cost", width: 8, render: (row) => formatCurrency(row.cost) },
-      { label: "Tokens", width: 7, render: (row) => formatAbbrev(row.tokens) },
-    ];
-  }
-  return [
-    { label: "Cost", width: 8, render: (row) => formatCurrency(row.cost) },
-    { label: "Tokens", width: 7, render: (row) => formatAbbrev(row.tokens) },
-  ];
-}
-
-function labelWidth(columns: TableColumn[], width: number): number {
-  const columnWidth =
-    columns.reduce((sum, column) => sum + column.width, 0) +
-    Math.max(0, (columns.length - 1) * 2);
-  return Math.max(18, width - columnWidth - 2);
-}
-
-function tableLine(
-  label: string,
-  columns: TableColumn[],
-  providerWidth: number,
-  row?: AggregatedUsageRow,
-): string {
-  const cells = columns.map((column) =>
-    padVisible(
-      row ? column.render(row) : column.label,
-      column.width,
-      "right",
-    ),
-  );
-  return `${padVisible(label, providerWidth, "left")}  ${cells.join("  ")}`;
-}
-
-function separator(columns: TableColumn[], providerWidth: number): string {
-  const width =
-    providerWidth +
-    2 +
-    columns.reduce((sum, column) => sum + column.width, 0) +
-    Math.max(0, (columns.length - 1) * 2);
-  return "─".repeat(width);
 }
 
 function liveProviders(state: UsageCoreState): ProviderUsageSnapshot[] {
