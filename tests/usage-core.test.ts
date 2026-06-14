@@ -339,4 +339,47 @@ describe("UsageCore", () => {
 		expect(setInterval).toHaveBeenCalledTimes(1);
 		rmSync(root, { recursive: true, force: true });
 	});
+
+	it("populateProviders mutex prevents duplicate parallel fetches", async () => {
+		const root = mkTmp();
+		const fetchFn = vi.fn(async () => {
+			await new Promise((r) => setTimeout(r, 30));
+			throw new Error("offline");
+		});
+		const core = createUsageCore({
+			deps: createTestDeps(root, { fetch: fetchFn as never }),
+			onEmit: () => {},
+		});
+
+		// Start two concurrent populateProviders calls
+		const p1 = core.populateProviders(false);
+		const p2 = core.populateProviders(false);
+		await Promise.all([p1, p2]);
+
+		// Both resolved but only one round of provider fetches happened
+		// (7 providers * 1 round = 7 fetch calls, not 14)
+		expect(fetchFn.mock.calls.length).toBe(7);
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("populateProviders queues force refresh after in-progress completes", async () => {
+		const root = mkTmp();
+		const fetchFn = vi.fn(async () => {
+			await new Promise((r) => setTimeout(r, 10));
+			throw new Error("offline");
+		});
+		const core = createUsageCore({
+			deps: createTestDeps(root, { fetch: fetchFn as never }),
+			onEmit: () => {},
+		});
+
+		// Start a non-force call, then queue a force call while first is in-progress
+		const p1 = core.populateProviders(false);
+		const p2 = core.populateProviders(true); // force=true while p1 in progress
+		await Promise.all([p1, p2]);
+
+		// Force call should have triggered a second round (7 providers * 2 rounds = 14)
+		expect(fetchFn.mock.calls.length).toBe(14);
+		rmSync(root, { recursive: true, force: true });
+	});
 });

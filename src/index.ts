@@ -63,12 +63,11 @@ export function createUsageExtension(options?: UsageExtensionOptions) {
 
 		pi.on("model_select", (event, ctx) => {
 			core.updateModel(event.model ?? ctx.model);
-			if (core.isLiveProvider(core.getState().currentProviderId)) {
+			const state = core.getState();
+			if (core.isLiveProvider(state.currentProviderId)) {
 				void core.emitProviderUpdate(true, ctx.signal).catch(() => undefined);
 			} else {
-				pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, {
-					state: core.getState(),
-				});
+				pi.events.emit(USAGE_CORE_UPDATE_CURRENT_EVENT, { state });
 			}
 		});
 
