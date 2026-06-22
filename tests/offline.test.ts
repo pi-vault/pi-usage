@@ -315,6 +315,31 @@ describe("insights", () => {
     expect(projectInsights).toHaveLength(0);
   });
 
+  it("caps project insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      project: `proj-${String.fromCharCode(97 + i)}`,
+    }));
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights).toHaveLength(6);
+    expect(projectInsights[0].label).toBe("proj-a");
+    expect(projectInsights[4].label).toBe("proj-e");
+    expect(projectInsights[5].label).toBe("+2 more");
+    expect(projectInsights[5].cost).toBe(3);
+    expect(projectInsights[5].detail).toContain("10.7%");
+  });
+
   it("counts parallel sessions by distinct active session ids", () => {
     const sameSessionTurns = [1, 2, 3, 4].map((id) => ({
       id: String(id),

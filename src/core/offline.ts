@@ -367,14 +367,29 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
       byProject.set(t.project, (byProject.get(t.project) ?? 0) + t.cost);
     }
   }
-  const projectInsights: InsightItem[] = [...byProject.entries()]
-    .sort((a, b) => b[1] - a[1])
+  const maxProjects = 5;
+  const allProjectEntries = [...byProject.entries()].sort(
+    (a, b) => b[1] - a[1],
+  );
+  const projectInsights: InsightItem[] = allProjectEntries
+    .slice(0, maxProjects)
     .map(([project, cost]) => ({
       category: "project",
       label: project,
       cost,
       detail: pct(cost),
     }));
+  if (allProjectEntries.length > maxProjects) {
+    const remainingCost = allProjectEntries
+      .slice(maxProjects)
+      .reduce((sum, [, c]) => sum + c, 0);
+    projectInsights.push({
+      category: "project",
+      label: `+${allProjectEntries.length - maxProjects} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
 
   return [
     ...projectInsights,
