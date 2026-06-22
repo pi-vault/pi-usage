@@ -1,6 +1,8 @@
+import { join } from "node:path";
 import type { UsageDeps } from "../shared/deps.ts";
 import type {
 	ProviderId,
+	UsageConfig,
 	UsageCoreState,
 } from "../shared/types.ts";
 import {
@@ -45,15 +47,25 @@ export interface UsageCore {
 	shutdown(): void;
 }
 
+async function loadConfig(deps: UsageDeps): Promise<UsageConfig> {
+	try {
+		const configPath = join(deps.agentDir(), "extensions", "usage.json");
+		const raw = await deps.readFile(configPath, "utf8");
+		return JSON.parse(raw as string) as UsageConfig;
+	} catch {
+		return {};
+	}
+}
+
 export function createUsageCore(options: UsageCoreOptions): UsageCore {
 	const { deps, onEmit } = options;
 
 	// --- Provider registry (created once, reused) ---
-	const providers = createProviderRegistry(deps);
-	const liveProviderIds = new Set(
+	let providers = createProviderRegistry(deps);
+	let liveProviderIds = new Set(
 		providers.filter((p) => p.strategy === "api").map((p) => p.id),
 	);
-	const liveProviderSnapshotFiles = new Set(
+	let liveProviderSnapshotFiles = new Set(
 		[...liveProviderIds].map((id) => `${id}.json`),
 	);
 
@@ -200,6 +212,19 @@ export function createUsageCore(options: UsageCoreOptions): UsageCore {
 	}
 
 	async function bootstrap(): Promise<void> {
+		const config = await loadConfig(deps);
+		if (config.providers) {
+			providers = providers.filter((p) => {
+				const setting = config.providers?.[p.id];
+				return setting?.enabled !== false;
+			});
+			liveProviderIds = new Set(
+				providers.filter((p) => p.strategy === "api").map((p) => p.id),
+			);
+			liveProviderSnapshotFiles = new Set(
+				[...liveProviderIds].map((id) => `${id}.json`),
+			);
+		}
 		await Promise.all([populateProviders(false), refreshOffline(false)]);
 		state.diagnostics = ["live runtime ready"];
 		emit(USAGE_CORE_READY_EVENT);
