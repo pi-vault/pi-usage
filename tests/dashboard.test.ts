@@ -585,6 +585,30 @@ describe("dashboard render", () => {
     expect(c.render(120).join("\n")).toContain("openai-codex");
   });
 
+  it("renders insights grouped by category", () => {
+    const state = mkState();
+    state.insights = [
+      { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
+      { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
+      {
+        category: "cost",
+        label: "Large context",
+        cost: 5,
+        detail: "50.0% over 150k context",
+      },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    c.handleInput("v");
+    const out = c.render(100).join("\n");
+    expect(out).toContain("Projects");
+    expect(out).toContain("career-ops");
+    expect(out).toContain("90.0%");
+    expect(out).toContain("Cost patterns");
+    expect(out).toContain("Large context");
+  });
+
   it("closes the dashboard on q and Esc, calling cancelScan", () => {
     const done = vi.fn();
     const cancelScan = vi.fn();
