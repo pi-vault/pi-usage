@@ -106,6 +106,7 @@ export interface CurrentUsageCompatibility {
 }
 
 export interface UsageInsight {
+  category?: string;
   label: string;
   cost: number;
   detail: string;

@@ -126,7 +126,7 @@ export interface InsightItem {
 }
 ```
 
-**Top projects:** Group turns by `project`, sum cost, return top entries sorted by cost descending. Label: project name. Detail: percentage of total cost.
+**Top projects:** Group turns by `project`, sum cost, sort by cost descending, cap at 5. If more than 5 projects exist, append one summary row (`+N more`) aggregating the remaining projects' cost and percentage. Label: project name. Detail: percentage of total cost.
 
 **Top skills:** Group turns by `activeSkill` (where set), sum cost, return top entries sorted by cost descending. Turns with no active skill are grouped as "(no skill)". Label: skill name (with `/` prefix for display). Detail: percentage of total cost.
 

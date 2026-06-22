@@ -15,6 +15,7 @@ export interface UsageTurn {
   cacheWrite: number;
   tokens: number;
   cost: number;
+  project?: string;
 }
 
 export interface GroupTotals {
@@ -191,6 +192,12 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
   return { id, ...turnBase };
 }
 
+function projectFromCwd(cwd: unknown): string | undefined {
+  if (typeof cwd !== "string" || !cwd) return undefined;
+  const segments = cwd.replace(/\/+$/, "").split("/");
+  return segments[segments.length - 1] || undefined;
+}
+
 export async function scanOfflineUsage(
   deps: UsageDeps,
   options?: { refresh?: boolean; shouldCancel?: () => boolean },
@@ -239,10 +246,21 @@ export async function scanOfflineUsage(
       continue;
     }
     const sessionId = file;
+    let sessionProject: string | undefined;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed?.type === "session" && parsed.cwd) {
+          sessionProject = projectFromCwd(parsed.cwd);
+          continue;
+        }
+      } catch {
+        // fall through to existing parseLine logic
+      }
       const turn = parseLine(line, sessionId);
       if (!turn) continue;
+      turn.project = sessionProject;
       if (seen.has(turn.id)) continue;
       seen.add(turn.id);
       turns.push(turn);
@@ -285,6 +303,7 @@ export async function scanOfflineUsage(
 }
 
 export interface InsightItem {
+  category?: string;
   label: string;
   cost: number;
   detail: string;
@@ -341,28 +360,65 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
 
   const pct = (n: number) =>
     totalCost > 0 ? `${((100 * n) / totalCost).toFixed(1)}%` : "0.0%";
+
+  const byProject = new Map<string, number>();
+  for (const t of turns) {
+    if (t.project) {
+      byProject.set(t.project, (byProject.get(t.project) ?? 0) + t.cost);
+    }
+  }
+  const maxProjects = 5;
+  const allProjectEntries = [...byProject.entries()].sort(
+    (a, b) => b[1] - a[1],
+  );
+  const projectInsights: InsightItem[] = allProjectEntries
+    .slice(0, maxProjects)
+    .map(([project, cost]) => ({
+      category: "project",
+      label: project,
+      cost,
+      detail: pct(cost),
+    }));
+  if (allProjectEntries.length > maxProjects) {
+    const remainingCost = allProjectEntries
+      .slice(maxProjects)
+      .reduce((sum, [, c]) => sum + c, 0);
+    projectInsights.push({
+      category: "project",
+      label: `+${allProjectEntries.length - maxProjects} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
+
   return [
+    ...projectInsights,
     {
+      category: "cost",
       label: "Parallel sessions",
       cost: parallelCost,
       detail: `${pct(parallelCost)} cost while >=4 active`,
     },
     {
+      category: "cost",
       label: "Large context",
       cost: largeContext,
       detail: `${pct(largeContext)} over 150k context`,
     },
     {
+      category: "cost",
       label: "Large uncached",
       cost: largeUncached,
       detail: `${pct(largeUncached)} over 100k input`,
     },
     {
+      category: "cost",
       label: "Long sessions",
       cost: longSessionCost,
       detail: `${pct(longSessionCost)} from 8h+ sessions`,
     },
     {
+      category: "cost",
       label: "Top-5 concentration",
       cost: top5,
       detail: `${pct(top5)} in top 5 sessions`,

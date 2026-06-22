@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `category` field to insights, extract project names from session CWD during the offline scan, compute a "Top projects" breakdown, and render insights grouped by category in the dashboard.
+**Goal:** Add a `category` field to insights, extract project names from session CWD during the offline scan, compute a "Top projects" breakdown (capped at 5 with overflow summary), and render insights grouped by category in the dashboard.
 
-**Architecture:** Four tasks in sequence. Task 3.1 adds the `category` field to types and tags existing insights as `"cost"`. Task 3.2 enriches the JSONL scan to extract session CWD and set `project` on each turn. Task 3.3 adds project grouping to `buildInsights()`. Task 3.4 replaces the flat insights list in the dashboard with category-grouped rendering (tables for breakdown categories, bullet list for cost patterns). This also establishes the rendering infrastructure that Phase 4 builds on.
+**Architecture:** Five tasks in sequence. Task 3.1 adds the `category` field to types and tags existing insights as `"cost"`. Task 3.2 enriches the JSONL scan to extract session CWD and set `project` on each turn. Task 3.3 adds project grouping to `buildInsights()`. Task 3.4 replaces the flat insights list in the dashboard with category-grouped rendering (tables for breakdown categories, bullet list for cost patterns). Task 3.5 caps project insights at 5, with a `+N more` overflow row aggregating the remaining projects. This also establishes the rendering infrastructure that Phase 4 builds on.
 
 **Tech Stack:** TypeScript, Vitest, TUI rendering
 
@@ -584,4 +584,112 @@ Expected: all lint, typecheck, and tests pass.
 ```bash
 git add src/tui/dashboard.ts tests/dashboard.test.ts
 git commit -m "feat(tui): render insights grouped by category"
+```
+
+---
+
+### Task 3.5: Cap project insights at 5 with overflow summary
+
+**Files:**
+
+- Modify: `src/core/offline.ts`
+- Modify: `tests/offline.test.ts`
+
+- [ ] **Step 1: Write failing test for project cap with overflow**
+
+Add to the `describe("insights", ...)` block in `tests/offline.test.ts`, after the existing project insight tests:
+
+```ts
+it("caps project insights at 5 with overflow summary", () => {
+  const turns = Array.from({ length: 7 }, (_, i) => ({
+    id: String(i),
+    sessionId: `s${i}`,
+    timestamp: i,
+    provider: "p",
+    model: "m",
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    tokens: 2,
+    cost: 7 - i,
+    project: `proj-${String.fromCharCode(97 + i)}`,
+  }));
+  const insights = buildInsights(turns);
+  const projectInsights = insights.filter((i) => i.category === "project");
+  expect(projectInsights).toHaveLength(6);
+  expect(projectInsights[0].label).toBe("proj-a");
+  expect(projectInsights[4].label).toBe("proj-e");
+  expect(projectInsights[5].label).toBe("+2 more");
+  expect(projectInsights[5].cost).toBe(3);
+  expect(projectInsights[5].detail).toContain("10.7%");
+});
+```
+
+Math check: 7 turns with costs [7, 6, 5, 4, 3, 2, 1], totalCost = 28. Top 5 costs sum to 25. Remaining 2 projects cost 2 + 1 = 3. `pct(3)` = `((100 * 3) / 28).toFixed(1)` = `"10.7%"`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pnpm test -- tests/offline.test.ts`
+
+Expected: FAIL — currently all 7 projects are returned, but test expects only 6 items (5 + overflow).
+
+- [ ] **Step 3: Implement project cap in buildInsights**
+
+In `src/core/offline.ts`, replace the current `projectInsights` construction (lines 370-377):
+
+```ts
+// Replace this:
+const projectInsights: InsightItem[] = [...byProject.entries()]
+  .sort((a, b) => b[1] - a[1])
+  .map(([project, cost]) => ({
+    category: "project",
+    label: project,
+    cost,
+    detail: pct(cost),
+  }));
+
+// With this:
+const maxProjects = 5;
+const allProjectEntries = [...byProject.entries()].sort(
+  (a, b) => b[1] - a[1],
+);
+const projectInsights: InsightItem[] = allProjectEntries
+  .slice(0, maxProjects)
+  .map(([project, cost]) => ({
+    category: "project",
+    label: project,
+    cost,
+    detail: pct(cost),
+  }));
+if (allProjectEntries.length > maxProjects) {
+  const remainingCost = allProjectEntries
+    .slice(maxProjects)
+    .reduce((sum, [, c]) => sum + c, 0);
+  projectInsights.push({
+    category: "project",
+    label: `+${allProjectEntries.length - maxProjects} more`,
+    cost: remainingCost,
+    detail: pct(remainingCost),
+  });
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pnpm test -- tests/offline.test.ts`
+
+Expected: PASS. The existing `"produces project breakdown insights"` test (2 projects, under the cap) still passes unchanged. The new test verifies the cap and overflow row.
+
+- [ ] **Step 5: Run full check**
+
+Run: `pnpm check`
+
+Expected: all lint, typecheck, and tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/core/offline.ts tests/offline.test.ts
+git commit -m "feat(insights): cap project insights at 5 with overflow summary"
 ```

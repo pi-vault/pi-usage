@@ -127,6 +127,99 @@ describe("offline scanner", () => {
     });
     expect(result.turns).toHaveLength(0);
   });
+
+  it("extracts project name from session header cwd", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions", "proj");
+    mkdirSync(sessions, { recursive: true });
+    const sessionHeader = JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "test-session",
+      timestamp: "2026-05-30T10:00:00Z",
+      cwd: "/Users/dev/career-ops",
+    });
+    const message = JSON.stringify({
+      type: "message",
+      id: "m1",
+      timestamp: "2026-05-30T11:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "MiniMax-M2.7",
+        usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.5 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${sessionHeader}\n${message}\n`,
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(1);
+    expect(result.turns[0].project).toBe("career-ops");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("falls back to undefined project when no session header", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const message = JSON.stringify({
+      type: "message",
+      id: "m1",
+      timestamp: "2026-05-30T11:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.1 },
+      },
+    });
+    writeFileSync(join(sessions, "s.jsonl"), `${message}\n`, "utf8");
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+    });
+    expect(result.turns[0].project).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("extracts project name from cwd with trailing slash", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const sessionHeader = JSON.stringify({
+      type: "session",
+      cwd: "/Users/dev/career-ops/",
+    });
+    const message = JSON.stringify({
+      type: "message",
+      id: "m1",
+      timestamp: "2026-05-30T11:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.1 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${sessionHeader}\n${message}\n`,
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+    });
+    expect(result.turns[0].project).toBe("career-ops");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("insights", () => {
@@ -160,6 +253,91 @@ describe("insights", () => {
       },
     ];
     expect(buildInsights(turns)).toHaveLength(5);
+  });
+
+  it("produces project breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 9,
+        project: "career-ops",
+      },
+      {
+        id: "2",
+        sessionId: "s2",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+        project: "dotfiles",
+      },
+    ];
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights.length).toBeGreaterThanOrEqual(2);
+    expect(projectInsights[0].label).toBe("career-ops");
+    expect(projectInsights[0].detail).toContain("90.0%");
+    expect(projectInsights[1].label).toBe("dotfiles");
+  });
+
+  it("omits project insights when no projects are set", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights).toHaveLength(0);
+  });
+
+  it("caps project insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      project: `proj-${String.fromCharCode(97 + i)}`,
+    }));
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights).toHaveLength(6);
+    expect(projectInsights[0].label).toBe("proj-a");
+    expect(projectInsights[4].label).toBe("proj-e");
+    expect(projectInsights[5].label).toBe("+2 more");
+    expect(projectInsights[5].cost).toBe(3);
+    expect(projectInsights[5].detail).toContain("10.7%");
   });
 
   it("counts parallel sessions by distinct active session ids", () => {

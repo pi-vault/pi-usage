@@ -388,13 +388,7 @@ export class UsageDashboardComponent implements Component {
       if (this.state.insights.length === 0) {
         lines.push(this.theme.dim("No insights yet."));
       } else {
-        for (const item of this.state.insights) {
-          lines.push(
-            this.theme.dim(
-              `- ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`,
-            ),
-          );
-        }
+        lines.push(...this.renderInsightsByCategory(w));
       }
       return;
     }
@@ -429,6 +423,60 @@ export class UsageDashboardComponent implements Component {
     lines.push(tableLine("Total", columns, providerWidth, period.total));
     lines.push("");
     lines.push(...this.renderLegend(w));
+  }
+
+  private renderInsightsByCategory(_w: number): string[] {
+    const lines: string[] = [];
+    const categoryOrder = ["project", "skill", "mcp", "cost"];
+    const categoryLabels: Record<string, string> = {
+      project: "Projects",
+      skill: "Skills",
+      mcp: "MCP servers",
+      cost: "Cost patterns",
+    };
+
+    const grouped = new Map<string, typeof this.state.insights>();
+    for (const item of this.state.insights) {
+      const cat = item.category ?? "cost";
+      const list = grouped.get(cat) ?? [];
+      list.push(item);
+      grouped.set(cat, list);
+    }
+
+    for (const cat of categoryOrder) {
+      const items = grouped.get(cat);
+      if (!items || items.length === 0) continue;
+      lines.push("");
+      const header = categoryLabels[cat] ?? cat;
+      if (cat === "cost") {
+        lines.push(this.theme.dim(header));
+        for (const item of items) {
+          lines.push(
+            this.theme.dim(
+              `  - ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`,
+            ),
+          );
+        }
+      } else {
+        const pctHeader = "% of usage";
+        const maxLabelLen = Math.max(
+          ...items.map((i) => i.label.length),
+          header.length,
+        );
+        const headerLine = `  ${padVisible(this.theme.dim(header), maxLabelLen + 2, "left")}  ${this.theme.dim(pctHeader)}`;
+        lines.push(headerLine);
+        for (const item of items) {
+          const label = padVisible(
+            this.theme.dim(item.label),
+            maxLabelLen + 2,
+            "left",
+          );
+          lines.push(`  ${label}  ${this.theme.dim(item.detail)}`);
+        }
+      }
+    }
+
+    return lines;
   }
 
   private renderCurrentUsage(w: number, lines: string[]): void {
