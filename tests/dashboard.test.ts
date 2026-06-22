@@ -320,6 +320,18 @@ describe("dashboard render", () => {
     expect(out).not.toContain("Command Code web usage API");
   });
 
+  it("renders empty line between Usage Statistics title and period tabs", () => {
+    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+      theme: noTheme,
+    });
+    const lines = c.render(140);
+
+    const titleIdx = lines.findIndex((l) => l.includes("Usage Statistics"));
+    expect(titleIdx).toBeGreaterThan(-1);
+    expect(lines[titleIdx + 1]).toBe("");
+    expect(lines[titleIdx + 2]).toContain("All Time");
+  });
+
   it("wraps joined legend and supports tab-based provider navigation", () => {
     const c = new UsageDashboardComponent(mkState(), () => undefined, {
       theme: noTheme,
