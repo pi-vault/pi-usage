@@ -461,8 +461,75 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
     });
   }
 
+  // Skill insights
+  const bySkill = new Map<string, number>();
+  let hasAnySkill = false;
+  for (const t of turns) {
+    if (t.activeSkill) {
+      hasAnySkill = true;
+      const key = `/${t.activeSkill}`;
+      bySkill.set(key, (bySkill.get(key) ?? 0) + t.cost);
+    } else {
+      bySkill.set("(no skill)", (bySkill.get("(no skill)") ?? 0) + t.cost);
+    }
+  }
+  const allSkillEntries = hasAnySkill
+    ? [...bySkill.entries()].sort((a, b) => b[1] - a[1])
+    : [];
+  const skillInsights: InsightItem[] = allSkillEntries
+    .slice(0, maxProjects)
+    .map(([skill, cost]) => ({
+      category: "skill",
+      label: skill,
+      cost,
+      detail: pct(cost),
+    }));
+  if (allSkillEntries.length > maxProjects) {
+    const remainingCost = allSkillEntries
+      .slice(maxProjects)
+      .reduce((sum, [, c]) => sum + c, 0);
+    skillInsights.push({
+      category: "skill",
+      label: `+${allSkillEntries.length - maxProjects} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
+
+  // MCP server insights
+  const byMcp = new Map<string, number>();
+  for (const t of turns) {
+    if (t.mcpTools) {
+      for (const server of t.mcpTools) {
+        byMcp.set(server, (byMcp.get(server) ?? 0) + t.cost);
+      }
+    }
+  }
+  const allMcpEntries = [...byMcp.entries()].sort((a, b) => b[1] - a[1]);
+  const mcpInsights: InsightItem[] = allMcpEntries
+    .slice(0, maxProjects)
+    .map(([server, cost]) => ({
+      category: "mcp",
+      label: server,
+      cost,
+      detail: pct(cost),
+    }));
+  if (allMcpEntries.length > maxProjects) {
+    const remainingCost = allMcpEntries
+      .slice(maxProjects)
+      .reduce((sum, [, c]) => sum + c, 0);
+    mcpInsights.push({
+      category: "mcp",
+      label: `+${allMcpEntries.length - maxProjects} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
+
   return [
     ...projectInsights,
+    ...skillInsights,
+    ...mcpInsights,
     {
       category: "cost",
       label: "Parallel sessions",

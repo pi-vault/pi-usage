@@ -474,4 +474,164 @@ describe("insights", () => {
     expect(buildInsights(sameSessionTurns)[0].cost).toBe(0);
     expect(buildInsights(distinctSessionTurns)[0].cost).toBe(4);
   });
+
+  it("produces skill breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 8,
+        activeSkill: "career-ops",
+      },
+      {
+        id: "2",
+        sessionId: "s1",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 2,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const skillInsights = insights.filter((i) => i.category === "skill");
+    expect(skillInsights.length).toBeGreaterThanOrEqual(2);
+    expect(skillInsights[0].label).toBe("/career-ops");
+    expect(skillInsights[0].detail).toContain("80.0%");
+    const noSkill = skillInsights.find((i) => i.label === "(no skill)");
+    expect(noSkill).toBeDefined();
+  });
+
+  it("produces MCP server breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 5,
+        mcpTools: ["playwright"],
+      },
+      {
+        id: "2",
+        sessionId: "s1",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 3,
+        mcpTools: ["playwright", "firefox"],
+      },
+      {
+        id: "3",
+        sessionId: "s1",
+        timestamp: 3,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 2,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const mcpInsights = insights.filter((i) => i.category === "mcp");
+    // playwright: $5 + $3 = $8, firefox: $3
+    expect(mcpInsights.length).toBeGreaterThanOrEqual(2);
+    expect(mcpInsights[0].label).toBe("playwright");
+    expect(mcpInsights[1].label).toBe("firefox");
+  });
+
+  it("caps skill insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      activeSkill: `skill-${String.fromCharCode(97 + i)}`,
+    }));
+    const insights = buildInsights(turns);
+    const skillInsights = insights.filter((i) => i.category === "skill");
+    expect(skillInsights).toHaveLength(6);
+    expect(skillInsights[0].label).toBe("/skill-a");
+    expect(skillInsights[4].label).toBe("/skill-e");
+    expect(skillInsights[5].label).toBe("+2 more");
+    expect(skillInsights[5].cost).toBe(3);
+  });
+
+  it("caps MCP insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      mcpTools: [`server-${String.fromCharCode(97 + i)}`],
+    }));
+    const insights = buildInsights(turns);
+    const mcpInsights = insights.filter((i) => i.category === "mcp");
+    expect(mcpInsights).toHaveLength(6);
+    expect(mcpInsights[0].label).toBe("server-a");
+    expect(mcpInsights[4].label).toBe("server-e");
+    expect(mcpInsights[5].label).toBe("+2 more");
+    expect(mcpInsights[5].cost).toBe(3);
+  });
+
+  it("omits skill/mcp insights when no data present", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+      },
+    ];
+    const insights = buildInsights(turns);
+    expect(insights.filter((i) => i.category === "skill")).toHaveLength(0);
+    expect(insights.filter((i) => i.category === "mcp")).toHaveLength(0);
+  });
 });
