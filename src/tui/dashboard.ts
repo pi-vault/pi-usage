@@ -367,6 +367,7 @@ export class UsageDashboardComponent implements Component {
         UI_STRINGS.dashboardBorderedSectionTitles.usageStatistics,
       ),
     );
+    lines.push("");
 
     lines.push(
       ...this.renderTabs(
