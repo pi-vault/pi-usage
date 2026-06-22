@@ -396,3 +396,110 @@ describe("UsageCore", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 });
+
+describe("config loading", () => {
+	it("loads config and filters disabled providers", async () => {
+		const root = mkTmp();
+		const extDir = join(root, "extensions");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "usage.json"),
+			JSON.stringify({ providers: { minimax: { enabled: false } } }),
+		);
+		const sessions = join(root, "sessions");
+		mkdirSync(sessions, { recursive: true });
+		writeFileSync(join(sessions, "s.jsonl"), "", "utf8");
+
+		const core = createUsageCore({
+			deps: createTestDeps(root),
+			onEmit: () => {},
+		});
+		await core.bootstrap();
+		const state = core.getState();
+
+		expect(
+			state.providers.find((p) => p.providerId === "minimax"),
+		).toBeUndefined();
+		expect(
+			state.providers.find((p) => p.providerId === "openai-codex"),
+		).toBeDefined();
+		expect(core.isLiveProvider("minimax")).toBe(false);
+		expect(core.isLiveProvider("openai-codex")).toBe(true);
+
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("disables multiple providers simultaneously", async () => {
+		const root = mkTmp();
+		const extDir = join(root, "extensions");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "usage.json"),
+			JSON.stringify({
+				providers: {
+					minimax: { enabled: false },
+					stepfun: { enabled: false },
+				},
+			}),
+		);
+		const sessions = join(root, "sessions");
+		mkdirSync(sessions, { recursive: true });
+		writeFileSync(join(sessions, "s.jsonl"), "", "utf8");
+
+		const core = createUsageCore({
+			deps: createTestDeps(root),
+			onEmit: () => {},
+		});
+		await core.bootstrap();
+		const state = core.getState();
+
+		const ids = state.providers.map((p) => p.providerId);
+		expect(ids).not.toContain("minimax");
+		expect(ids).not.toContain("stepfun");
+		expect(ids).toContain("openai-codex");
+
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("treats missing config file as all providers enabled", async () => {
+		const root = mkTmp();
+		const sessions = join(root, "sessions");
+		mkdirSync(sessions, { recursive: true });
+		writeFileSync(join(sessions, "s.jsonl"), "", "utf8");
+
+		const core = createUsageCore({
+			deps: createTestDeps(root),
+			onEmit: () => {},
+		});
+		await core.bootstrap();
+		const state = core.getState();
+
+		const ids = state.providers.map((p) => p.providerId);
+		expect(ids).toContain("openai-codex");
+		expect(ids).toContain("minimax");
+
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("ignores malformed config JSON", async () => {
+		const root = mkTmp();
+		const extDir = join(root, "extensions");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "usage.json"), "not json!!!");
+		const sessions = join(root, "sessions");
+		mkdirSync(sessions, { recursive: true });
+		writeFileSync(join(sessions, "s.jsonl"), "", "utf8");
+
+		const core = createUsageCore({
+			deps: createTestDeps(root),
+			onEmit: () => {},
+		});
+		await core.bootstrap();
+		const state = core.getState();
+
+		const ids = state.providers.map((p) => p.providerId);
+		expect(ids).toContain("minimax");
+
+		rmSync(root, { recursive: true, force: true });
+	});
+});
