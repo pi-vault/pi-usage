@@ -85,7 +85,7 @@ Enhance the JSONL scan in `src/core/offline.ts` to extract three new data points
 - Source: `type: "message"` entries with `role: "assistant"`, `content` array containing `type: "toolCall"` items.
 - Extract tool names from each `toolCall`.
 - Infer MCP server from tool name prefix: take the first underscore-separated segment as the server name (e.g. `playwright_browser_click` -> `playwright`, `firefox_devtools_take_snapshot` -> `firefox`, `minimax_coding_plan_web_search` -> `minimax`). This is a heuristic -- multi-word server names like `firefox-devtools` will appear as their first segment (`firefox`). Acceptable for v1; can be refined with a known-prefix mapping later.
-- Built-in tools are excluded from MCP attribution. Known built-in tools: `bash`, `read`, `write`, `edit`, `web_search`, `questionnaire`, `get_subagent_result`, `ask_user_question`, `Agent`, `mcp`.
+- Built-in tools are excluded from MCP attribution. Known built-in tools (from the Pi SDK's `core/tools/`): `bash`, `read`, `write`, `edit`, `grep`, `ls`, `find`.
 - Single-word tool names that aren't built-in (e.g. `tavily`, `ddgs`, `exa`, `firecrawl`) are treated as direct MCP server calls and attributed to that server name.
 
 ### Enriched turn type
@@ -128,9 +128,9 @@ export interface InsightItem {
 
 **Top projects:** Group turns by `project`, sum cost, sort by cost descending, cap at 5. If more than 5 projects exist, append one summary row (`+N more`) aggregating the remaining projects' cost and percentage. Label: project name. Detail: percentage of total cost.
 
-**Top skills:** Group turns by `activeSkill` (where set), sum cost, return top entries sorted by cost descending. Turns with no active skill are grouped as "(no skill)". Label: skill name (with `/` prefix for display). Detail: percentage of total cost.
+**Top skills:** Group turns by `activeSkill` (where set), sum cost, sort by cost descending, cap at 5. If more than 5 skills exist, append one summary row (`+N more`) aggregating the remaining skills' cost and percentage. Turns with no active skill are grouped as "(no skill)". Label: skill name (with `/` prefix for display). Detail: percentage of total cost.
 
-**Top MCP servers:** For each turn, extract unique MCP server prefixes from `mcpTools`. Attribute that turn's full cost to each server used. Return top entries sorted by cost descending. Label: server name. Detail: percentage of total cost.
+**Top MCP servers:** For each turn, extract unique MCP server prefixes from `mcpTools`. Attribute that turn's full cost to each server used. Sort by cost descending, cap at 5. If more than 5 servers exist, append one summary row (`+N more`) aggregating the remaining servers' cost and percentage. Label: server name. Detail: percentage of total cost.
 
 Existing five cost-pattern insights remain, tagged with `category: "cost"`.
 
