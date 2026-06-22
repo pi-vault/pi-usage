@@ -220,6 +220,77 @@ describe("offline scanner", () => {
     expect(result.turns[0].project).toBe("career-ops");
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("tags turns with the active skill from user messages", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const skillMessage = JSON.stringify({
+      type: "message",
+      id: "u1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: '<skill name="career-ops" location="/path/to/SKILL.md">\nSkill content\n</skill>\nDo the thing',
+          },
+        ],
+      },
+    });
+    const assistantTurn = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:01:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 1.0 },
+      },
+    });
+    const secondSkill = JSON.stringify({
+      type: "message",
+      id: "u2",
+      timestamp: "2026-05-30T10:02:00Z",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: '<skill name="writing-plans" location="/p">\ncontent\n</skill>',
+          },
+        ],
+      },
+    });
+    const assistantTurn2 = JSON.stringify({
+      type: "message",
+      id: "a2",
+      timestamp: "2026-05-30T10:03:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 2.0 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      [skillMessage, assistantTurn, secondSkill, assistantTurn2].join("\n") +
+        "\n",
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(2);
+    expect(result.turns[0].activeSkill).toBe("career-ops");
+    expect(result.turns[1].activeSkill).toBe("writing-plans");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("insights", () => {

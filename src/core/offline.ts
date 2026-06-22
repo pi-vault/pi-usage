@@ -16,6 +16,7 @@ export interface UsageTurn {
   tokens: number;
   cost: number;
   project?: string;
+  activeSkill?: string;
 }
 
 export interface GroupTotals {
@@ -192,6 +193,35 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
   return { id, ...turnBase };
 }
 
+const SKILL_NAME_RE = /<skill\s+name="([^"]+)"/;
+
+function extractSkillName(line: string): string | undefined {
+  try {
+    const row = JSON.parse(line) as Record<string, unknown>;
+    if (row?.type !== "message") return undefined;
+    const message = row.message as Record<string, unknown> | undefined;
+    if (message?.role !== "user") return undefined;
+    const content = message.content;
+    if (!Array.isArray(content)) return undefined;
+    for (const block of content) {
+      if (
+        typeof block === "object" &&
+        block !== null &&
+        (block as Record<string, unknown>).type === "text"
+      ) {
+        const text = (block as Record<string, unknown>).text;
+        if (typeof text === "string") {
+          const match = SKILL_NAME_RE.exec(text);
+          if (match) return match[1];
+        }
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return undefined;
+}
+
 function projectFromCwd(cwd: unknown): string | undefined {
   if (typeof cwd !== "string" || !cwd) return undefined;
   const segments = cwd.replace(/\/+$/, "").split("/");
@@ -247,6 +277,7 @@ export async function scanOfflineUsage(
     }
     const sessionId = file;
     let sessionProject: string | undefined;
+    let activeSkill: string | undefined;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
@@ -258,9 +289,14 @@ export async function scanOfflineUsage(
       } catch {
         // fall through to existing parseLine logic
       }
+      const skillName = extractSkillName(line);
+      if (skillName !== undefined) {
+        activeSkill = skillName;
+      }
       const turn = parseLine(line, sessionId);
       if (!turn) continue;
       turn.project = sessionProject;
+      turn.activeSkill = activeSkill;
       if (seen.has(turn.id)) continue;
       seen.add(turn.id);
       turns.push(turn);
