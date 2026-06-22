@@ -1,6 +1,6 @@
 {
   "name": "@pi-vault/pi-usage",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Pi extension that displays aggregated usage statistics across all sessions",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
@@ -38,26 +38,25 @@
     ]
   },
   "engines": {
-    "node": ">=22.19"
+    "node": ">=24.15.0"
   },
   "files": [
     "src",
     "docs/assets",
+    "LICENSE",
+    "CHANGELOG.md",
     "README.md"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
-    "@earendil-works/pi-coding-agent": "^0.79.3",
-    "@earendil-works/pi-tui": "^0.79.3",
-    "@types/node": "^25.9.1",
+    "@biomejs/biome": "^2.5.0",
+    "@earendil-works/pi-coding-agent": "^0.79.8",
+    "@earendil-works/pi-tui": "^0.79.8",
+    "@types/node": "^25.9.3",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.8"
   }
 }

@@ -165,11 +165,11 @@ describe("package config", () => {
     });
   });
 
-  it("requires Node 22.19 or newer", () => {
+  it("requires Node 24.15.0 or newer", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
       engines: { node: string };
     };
-    expect(pkg.engines.node).toBe(">=22.19");
+    expect(pkg.engines.node).toBe(">=24.15.0");
   });
 
   it("documents shared export entrypoints", () => {
