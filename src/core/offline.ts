@@ -15,6 +15,7 @@ export interface UsageTurn {
   cacheWrite: number;
   tokens: number;
   cost: number;
+  project?: string;
 }
 
 export interface GroupTotals {
@@ -191,6 +192,12 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
   return { id, ...turnBase };
 }
 
+function projectFromCwd(cwd: unknown): string | undefined {
+  if (typeof cwd !== "string" || !cwd) return undefined;
+  const segments = cwd.replace(/\/+$/, "").split("/");
+  return segments[segments.length - 1] || undefined;
+}
+
 export async function scanOfflineUsage(
   deps: UsageDeps,
   options?: { refresh?: boolean; shouldCancel?: () => boolean },
@@ -239,10 +246,21 @@ export async function scanOfflineUsage(
       continue;
     }
     const sessionId = file;
+    let sessionProject: string | undefined;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed?.type === "session" && parsed.cwd) {
+          sessionProject = projectFromCwd(parsed.cwd);
+          continue;
+        }
+      } catch {
+        // fall through to existing parseLine logic
+      }
       const turn = parseLine(line, sessionId);
       if (!turn) continue;
+      turn.project = sessionProject;
       if (seen.has(turn.id)) continue;
       seen.add(turn.id);
       turns.push(turn);
