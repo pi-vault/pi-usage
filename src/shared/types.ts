@@ -139,3 +139,7 @@ export interface UnavailableProviderState {
   providerId: ProviderId;
   diagnostic: string;
 }
+
+export interface UsageConfig {
+  providers?: Partial<Record<ProviderId, { enabled?: boolean }>>;
+}
