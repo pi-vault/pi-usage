@@ -285,6 +285,7 @@ export async function scanOfflineUsage(
 }
 
 export interface InsightItem {
+  category?: string;
   label: string;
   cost: number;
   detail: string;
@@ -343,26 +344,31 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
     totalCost > 0 ? `${((100 * n) / totalCost).toFixed(1)}%` : "0.0%";
   return [
     {
+      category: "cost",
       label: "Parallel sessions",
       cost: parallelCost,
       detail: `${pct(parallelCost)} cost while >=4 active`,
     },
     {
+      category: "cost",
       label: "Large context",
       cost: largeContext,
       detail: `${pct(largeContext)} over 150k context`,
     },
     {
+      category: "cost",
       label: "Large uncached",
       cost: largeUncached,
       detail: `${pct(largeUncached)} over 100k input`,
     },
     {
+      category: "cost",
       label: "Long sessions",
       cost: longSessionCost,
       detail: `${pct(longSessionCost)} from 8h+ sessions`,
     },
     {
+      category: "cost",
       label: "Top-5 concentration",
       cost: top5,
       detail: `${pct(top5)} in top 5 sessions`,
