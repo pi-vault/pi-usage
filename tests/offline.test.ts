@@ -188,6 +188,38 @@ describe("offline scanner", () => {
     expect(result.turns[0].project).toBeUndefined();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("extracts project name from cwd with trailing slash", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const sessionHeader = JSON.stringify({
+      type: "session",
+      cwd: "/Users/dev/career-ops/",
+    });
+    const message = JSON.stringify({
+      type: "message",
+      id: "m1",
+      timestamp: "2026-05-30T11:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.1 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      `${sessionHeader}\n${message}\n`,
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+    });
+    expect(result.turns[0].project).toBe("career-ops");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("insights", () => {
