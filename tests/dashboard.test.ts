@@ -601,12 +601,32 @@ describe("dashboard render", () => {
       theme: noTheme,
     });
     c.handleInput("v");
-    const out = c.render(100).join("\n");
+    const lines = c.render(100);
+    const out = lines.join("\n");
     expect(out).toContain("Projects");
     expect(out).toContain("career-ops");
     expect(out).toContain("90.0%");
     expect(out).toContain("Cost patterns");
     expect(out).toContain("Large context");
+    // Verify table structure for project category
+    const projectsIdx = lines.findIndex((l) => l.includes("Projects"));
+    expect(projectsIdx).toBeGreaterThan(-1);
+    expect(lines[projectsIdx]).toContain("% of usage");
+    expect(lines[projectsIdx + 1]).toContain("career-ops");
+    // Verify bullet-list format for cost category
+    expect(out).toContain("  - Large context:");
+  });
+
+  it("defaults insights without category to cost patterns", () => {
+    const state = mkState();
+    state.insights = [{ label: "No category", cost: 1, detail: "test" }];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    c.handleInput("v");
+    const out = c.render(100).join("\n");
+    expect(out).toContain("Cost patterns");
+    expect(out).toContain("  - No category:");
   });
 
   it("closes the dashboard on q and Esc, calling cancelScan", () => {
