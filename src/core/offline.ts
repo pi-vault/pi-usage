@@ -16,6 +16,8 @@ export interface UsageTurn {
   tokens: number;
   cost: number;
   project?: string;
+  activeSkill?: string;
+  mcpTools?: string[];
 }
 
 export interface GroupTotals {
@@ -189,7 +191,81 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
   };
   const id =
     typeof row.id === "string" && row.id.trim() ? row.id : fallbackId(turnBase);
-  return { id, ...turnBase };
+  const mcpTools = extractMcpServers(message as Record<string, unknown>);
+  return { id, ...turnBase, mcpTools };
+}
+
+const SKILL_NAME_RE = /<skill\s+name="([^"]+)"/;
+
+function extractSkillName(line: string): string | undefined {
+  try {
+    const row = JSON.parse(line) as Record<string, unknown>;
+    if (row?.type !== "message") return undefined;
+    const message = row.message as Record<string, unknown> | undefined;
+    if (message?.role !== "user") return undefined;
+    const content = message.content;
+    if (!Array.isArray(content)) return undefined;
+    for (const block of content) {
+      if (
+        typeof block === "object" &&
+        block !== null &&
+        (block as Record<string, unknown>).type === "text"
+      ) {
+        const text = (block as Record<string, unknown>).text;
+        if (typeof text === "string") {
+          const match = SKILL_NAME_RE.exec(text);
+          if (match) return match[1];
+        }
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return undefined;
+}
+
+const BUILTIN_TOOLS = new Set([
+  // SDK core tools
+  "bash",
+  "read",
+  "write",
+  "edit",
+  "grep",
+  "ls",
+  "find",
+  // Agent framework tools
+  "mcp",
+  "subagent",
+  "subagent_status",
+  "get_subagent_result",
+  "Agent",
+  "ask_user_question",
+  "plan_mode_question",
+  "compress",
+  "questionnaire",
+  "web_search",
+]);
+
+function extractMcpServers(
+  message: Record<string, unknown>,
+): string[] | undefined {
+  const content = message.content;
+  if (!Array.isArray(content)) return undefined;
+  const servers = new Set<string>();
+  for (const block of content) {
+    if (
+      typeof block === "object" &&
+      block !== null &&
+      (block as Record<string, unknown>).type === "toolCall"
+    ) {
+      const name = (block as Record<string, unknown>).name;
+      if (typeof name !== "string") continue;
+      if (BUILTIN_TOOLS.has(name)) continue;
+      const firstSegment = name.split("_")[0];
+      if (firstSegment) servers.add(firstSegment);
+    }
+  }
+  return servers.size > 0 ? [...servers] : undefined;
 }
 
 function projectFromCwd(cwd: unknown): string | undefined {
@@ -247,6 +323,7 @@ export async function scanOfflineUsage(
     }
     const sessionId = file;
     let sessionProject: string | undefined;
+    let activeSkill: string | undefined;
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
@@ -258,9 +335,14 @@ export async function scanOfflineUsage(
       } catch {
         // fall through to existing parseLine logic
       }
+      const skillName = extractSkillName(line);
+      if (skillName !== undefined) {
+        activeSkill = skillName;
+      }
       const turn = parseLine(line, sessionId);
       if (!turn) continue;
       turn.project = sessionProject;
+      turn.activeSkill = activeSkill;
       if (seen.has(turn.id)) continue;
       seen.add(turn.id);
       turns.push(turn);
@@ -367,25 +449,90 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
       byProject.set(t.project, (byProject.get(t.project) ?? 0) + t.cost);
     }
   }
-  const maxProjects = 5;
+  const maxCategoryEntries = 5;
   const allProjectEntries = [...byProject.entries()].sort(
     (a, b) => b[1] - a[1],
   );
   const projectInsights: InsightItem[] = allProjectEntries
-    .slice(0, maxProjects)
+    .slice(0, maxCategoryEntries)
     .map(([project, cost]) => ({
       category: "project",
       label: project,
       cost,
       detail: pct(cost),
     }));
-  if (allProjectEntries.length > maxProjects) {
+  if (allProjectEntries.length > maxCategoryEntries) {
     const remainingCost = allProjectEntries
-      .slice(maxProjects)
+      .slice(maxCategoryEntries)
       .reduce((sum, [, c]) => sum + c, 0);
     projectInsights.push({
       category: "project",
-      label: `+${allProjectEntries.length - maxProjects} more`,
+      label: `+${allProjectEntries.length - maxCategoryEntries} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
+
+  // Skill insights
+  const bySkill = new Map<string, number>();
+  let hasAnySkill = false;
+  for (const t of turns) {
+    if (t.activeSkill) {
+      hasAnySkill = true;
+      const key = `/${t.activeSkill}`;
+      bySkill.set(key, (bySkill.get(key) ?? 0) + t.cost);
+    } else {
+      bySkill.set("(no skill)", (bySkill.get("(no skill)") ?? 0) + t.cost);
+    }
+  }
+  const allSkillEntries = hasAnySkill
+    ? [...bySkill.entries()].sort((a, b) => b[1] - a[1])
+    : [];
+  const skillInsights: InsightItem[] = allSkillEntries
+    .slice(0, maxCategoryEntries)
+    .map(([skill, cost]) => ({
+      category: "skill",
+      label: skill,
+      cost,
+      detail: pct(cost),
+    }));
+  if (allSkillEntries.length > maxCategoryEntries) {
+    const remainingCost = allSkillEntries
+      .slice(maxCategoryEntries)
+      .reduce((sum, [, c]) => sum + c, 0);
+    skillInsights.push({
+      category: "skill",
+      label: `+${allSkillEntries.length - maxCategoryEntries} more`,
+      cost: remainingCost,
+      detail: pct(remainingCost),
+    });
+  }
+
+  // MCP server insights
+  const byMcp = new Map<string, number>();
+  for (const t of turns) {
+    if (t.mcpTools) {
+      for (const server of t.mcpTools) {
+        byMcp.set(server, (byMcp.get(server) ?? 0) + t.cost);
+      }
+    }
+  }
+  const allMcpEntries = [...byMcp.entries()].sort((a, b) => b[1] - a[1]);
+  const mcpInsights: InsightItem[] = allMcpEntries
+    .slice(0, maxCategoryEntries)
+    .map(([server, cost]) => ({
+      category: "mcp",
+      label: server,
+      cost,
+      detail: pct(cost),
+    }));
+  if (allMcpEntries.length > maxCategoryEntries) {
+    const remainingCost = allMcpEntries
+      .slice(maxCategoryEntries)
+      .reduce((sum, [, c]) => sum + c, 0);
+    mcpInsights.push({
+      category: "mcp",
+      label: `+${allMcpEntries.length - maxCategoryEntries} more`,
       cost: remainingCost,
       detail: pct(remainingCost),
     });
@@ -393,6 +540,8 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
 
   return [
     ...projectInsights,
+    ...skillInsights,
+    ...mcpInsights,
     {
       category: "cost",
       label: "Parallel sessions",

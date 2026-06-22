@@ -220,6 +220,175 @@ describe("offline scanner", () => {
     expect(result.turns[0].project).toBe("career-ops");
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("tags turns with the active skill from user messages", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const skillMessage = JSON.stringify({
+      type: "message",
+      id: "u1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: '<skill name="career-ops" location="/path/to/SKILL.md">\nSkill content\n</skill>\nDo the thing',
+          },
+        ],
+      },
+    });
+    const assistantTurn = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:01:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 1.0 },
+      },
+    });
+    const secondSkill = JSON.stringify({
+      type: "message",
+      id: "u2",
+      timestamp: "2026-05-30T10:02:00Z",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: '<skill name="writing-plans" location="/p">\ncontent\n</skill>',
+          },
+        ],
+      },
+    });
+    const assistantTurn2 = JSON.stringify({
+      type: "message",
+      id: "a2",
+      timestamp: "2026-05-30T10:03:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 2.0 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s.jsonl"),
+      [skillMessage, assistantTurn, secondSkill, assistantTurn2].join("\n") +
+        "\n",
+      "utf8",
+    );
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(2);
+    expect(result.turns[0].activeSkill).toBe("career-ops");
+    expect(result.turns[1].activeSkill).toBe("writing-plans");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("does not bleed active skill across session files", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    // Session 1: has a skill invocation
+    const s1Skill = JSON.stringify({
+      type: "message",
+      id: "u1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: '<skill name="tdd" location="/p">\nc\n</skill>' },
+        ],
+      },
+    });
+    const s1Turn = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:01:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 1 },
+      },
+    });
+    // Session 2: no skill invocation
+    const s2Turn = JSON.stringify({
+      type: "message",
+      id: "a2",
+      timestamp: "2026-05-30T10:02:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 1 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s1.jsonl"),
+      `${s1Skill}\n${s1Turn}\n`,
+      "utf8",
+    );
+    writeFileSync(join(sessions, "s2.jsonl"), `${s2Turn}\n`, "utf8");
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(2);
+    const withSkill = result.turns.find((t) => t.activeSkill === "tdd");
+    const withoutSkill = result.turns.find((t) => t.activeSkill === undefined);
+    expect(withSkill).toBeDefined();
+    expect(withoutSkill).toBeDefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("extracts MCP server names from tool call prefixes", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const message = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "playwright_browser_click",
+            arguments: {},
+          },
+          { type: "toolCall", id: "c2", name: "read", arguments: {} },
+          { type: "toolCall", id: "c3", name: "tavily", arguments: {} },
+        ],
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 1.0 },
+      },
+    });
+    writeFileSync(join(sessions, "s.jsonl"), `${message}\n`, "utf8");
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(1);
+    // "read" is built-in so excluded; "playwright" from prefix; "tavily" is single-word non-built-in
+    expect(result.turns[0].mcpTools).toEqual(
+      expect.arrayContaining(["playwright", "tavily"]),
+    );
+    expect(result.turns[0].mcpTools).not.toContain("read");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("insights", () => {
@@ -362,5 +531,165 @@ describe("insights", () => {
 
     expect(buildInsights(sameSessionTurns)[0].cost).toBe(0);
     expect(buildInsights(distinctSessionTurns)[0].cost).toBe(4);
+  });
+
+  it("produces skill breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 8,
+        activeSkill: "career-ops",
+      },
+      {
+        id: "2",
+        sessionId: "s1",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 2,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const skillInsights = insights.filter((i) => i.category === "skill");
+    expect(skillInsights.length).toBeGreaterThanOrEqual(2);
+    expect(skillInsights[0].label).toBe("/career-ops");
+    expect(skillInsights[0].detail).toContain("80.0%");
+    const noSkill = skillInsights.find((i) => i.label === "(no skill)");
+    expect(noSkill).toBeDefined();
+  });
+
+  it("produces MCP server breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 5,
+        mcpTools: ["playwright"],
+      },
+      {
+        id: "2",
+        sessionId: "s1",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 3,
+        mcpTools: ["playwright", "firefox"],
+      },
+      {
+        id: "3",
+        sessionId: "s1",
+        timestamp: 3,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 2,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const mcpInsights = insights.filter((i) => i.category === "mcp");
+    // playwright: $5 + $3 = $8, firefox: $3
+    expect(mcpInsights.length).toBeGreaterThanOrEqual(2);
+    expect(mcpInsights[0].label).toBe("playwright");
+    expect(mcpInsights[1].label).toBe("firefox");
+  });
+
+  it("caps skill insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      activeSkill: `skill-${String.fromCharCode(97 + i)}`,
+    }));
+    const insights = buildInsights(turns);
+    const skillInsights = insights.filter((i) => i.category === "skill");
+    expect(skillInsights).toHaveLength(6);
+    expect(skillInsights[0].label).toBe("/skill-a");
+    expect(skillInsights[4].label).toBe("/skill-e");
+    expect(skillInsights[5].label).toBe("+2 more");
+    expect(skillInsights[5].cost).toBe(3);
+  });
+
+  it("caps MCP insights at 5 with overflow summary", () => {
+    const turns = Array.from({ length: 7 }, (_, i) => ({
+      id: String(i),
+      sessionId: `s${i}`,
+      timestamp: i,
+      provider: "p",
+      model: "m",
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      tokens: 2,
+      cost: 7 - i,
+      mcpTools: [`server-${String.fromCharCode(97 + i)}`],
+    }));
+    const insights = buildInsights(turns);
+    const mcpInsights = insights.filter((i) => i.category === "mcp");
+    expect(mcpInsights).toHaveLength(6);
+    expect(mcpInsights[0].label).toBe("server-a");
+    expect(mcpInsights[4].label).toBe("server-e");
+    expect(mcpInsights[5].label).toBe("+2 more");
+    expect(mcpInsights[5].cost).toBe(3);
+  });
+
+  it("omits skill/mcp insights when no data present", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+      },
+    ];
+    const insights = buildInsights(turns);
+    expect(insights.filter((i) => i.category === "skill")).toHaveLength(0);
+    expect(insights.filter((i) => i.category === "mcp")).toHaveLength(0);
   });
 });

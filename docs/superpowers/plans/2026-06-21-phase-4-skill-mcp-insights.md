@@ -300,12 +300,9 @@ const BUILTIN_TOOLS = new Set([
   "read",
   "write",
   "edit",
-  "web_search",
-  "questionnaire",
-  "get_subagent_result",
-  "ask_user_question",
-  "Agent",
-  "mcp",
+  "grep",
+  "ls",
+  "find",
 ]);
 
 function extractMcpServers(
@@ -475,6 +472,54 @@ it("produces MCP server breakdown insights", () => {
   expect(mcpInsights[1].label).toBe("firefox");
 });
 
+it("caps skill insights at 5 with overflow summary", () => {
+  const turns = Array.from({ length: 7 }, (_, i) => ({
+    id: String(i),
+    sessionId: `s${i}`,
+    timestamp: i,
+    provider: "p",
+    model: "m",
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    tokens: 2,
+    cost: 7 - i,
+    activeSkill: `skill-${String.fromCharCode(97 + i)}`,
+  }));
+  const insights = buildInsights(turns);
+  const skillInsights = insights.filter((i) => i.category === "skill");
+  expect(skillInsights).toHaveLength(6);
+  expect(skillInsights[0].label).toBe("/skill-a");
+  expect(skillInsights[4].label).toBe("/skill-e");
+  expect(skillInsights[5].label).toBe("+2 more");
+  expect(skillInsights[5].cost).toBe(3);
+});
+
+it("caps MCP insights at 5 with overflow summary", () => {
+  const turns = Array.from({ length: 7 }, (_, i) => ({
+    id: String(i),
+    sessionId: `s${i}`,
+    timestamp: i,
+    provider: "p",
+    model: "m",
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    tokens: 2,
+    cost: 7 - i,
+    mcpTools: [`server-${String.fromCharCode(97 + i)}`],
+  }));
+  const insights = buildInsights(turns);
+  const mcpInsights = insights.filter((i) => i.category === "mcp");
+  expect(mcpInsights).toHaveLength(6);
+  expect(mcpInsights[0].label).toBe("server-a");
+  expect(mcpInsights[4].label).toBe("server-e");
+  expect(mcpInsights[5].label).toBe("+2 more");
+  expect(mcpInsights[5].cost).toBe(3);
+});
+
 it("omits skill/mcp insights when no data present", () => {
   const turns = [
     {
@@ -520,16 +565,28 @@ for (const t of turns) {
     bySkill.set("(no skill)", (bySkill.get("(no skill)") ?? 0) + t.cost);
   }
 }
-const skillInsights: InsightItem[] = hasAnySkill
-  ? [...bySkill.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([skill, cost]) => ({
-        category: "skill",
-        label: skill,
-        cost,
-        detail: pct(cost),
-      }))
+const allSkillEntries = hasAnySkill
+  ? [...bySkill.entries()].sort((a, b) => b[1] - a[1])
   : [];
+const skillInsights: InsightItem[] = allSkillEntries
+  .slice(0, maxProjects)
+  .map(([skill, cost]) => ({
+    category: "skill",
+    label: skill,
+    cost,
+    detail: pct(cost),
+  }));
+if (allSkillEntries.length > maxProjects) {
+  const remainingCost = allSkillEntries
+    .slice(maxProjects)
+    .reduce((sum, [, c]) => sum + c, 0);
+  skillInsights.push({
+    category: "skill",
+    label: `+${allSkillEntries.length - maxProjects} more`,
+    cost: remainingCost,
+    detail: pct(remainingCost),
+  });
+}
 
 // MCP server insights
 const byMcp = new Map<string, number>();
@@ -540,14 +597,26 @@ for (const t of turns) {
     }
   }
 }
-const mcpInsights: InsightItem[] = [...byMcp.entries()]
-  .sort((a, b) => b[1] - a[1])
+const allMcpEntries = [...byMcp.entries()].sort((a, b) => b[1] - a[1]);
+const mcpInsights: InsightItem[] = allMcpEntries
+  .slice(0, maxProjects)
   .map(([server, cost]) => ({
     category: "mcp",
     label: server,
     cost,
     detail: pct(cost),
   }));
+if (allMcpEntries.length > maxProjects) {
+  const remainingCost = allMcpEntries
+    .slice(maxProjects)
+    .reduce((sum, [, c]) => sum + c, 0);
+  mcpInsights.push({
+    category: "mcp",
+    label: `+${allMcpEntries.length - maxProjects} more`,
+    cost: remainingCost,
+    detail: pct(remainingCost),
+  });
+}
 ```
 
 Update the return to include all categories in order:
