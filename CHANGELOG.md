@@ -2,6 +2,15 @@
 
 All notable changes to `@pi-vault/pi-usage` are documented here.
 
+## v0.5.0
+
+- added `usage.json` provider toggles so you can disable live providers you do not want queried
+- added dashboard insights for project, active skill, and MCP server breakdowns
+- grouped insight rows by category and cap each insight section with an overflow summary to keep the dashboard readable
+- improved offline session parsing to extract project names, active skills, MCP server names, and builtin tool usage more accurately
+- fixed dashboard readability around usage statistics spacing and grouped insight rendering
+- updated runtime requirements and tooling to Node `>=24.15.0`, refreshed dependencies, and aligned CI with Node 24 and pnpm 11.8.0
+
 ## v0.4.0
 
 - reorganized the extension around a dedicated `UsageCore`, with the package entrypoint reduced to a thin Pi adapter
