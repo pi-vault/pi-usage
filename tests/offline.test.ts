@@ -291,6 +291,46 @@ describe("offline scanner", () => {
     expect(result.turns[1].activeSkill).toBe("writing-plans");
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("extracts MCP server names from tool call prefixes", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const message = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "playwright_browser_click",
+            arguments: {},
+          },
+          { type: "toolCall", id: "c2", name: "read", arguments: {} },
+          { type: "toolCall", id: "c3", name: "tavily", arguments: {} },
+        ],
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, cost: 1.0 },
+      },
+    });
+    writeFileSync(join(sessions, "s.jsonl"), `${message}\n`, "utf8");
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(1);
+    // "read" is built-in so excluded; "playwright" from prefix; "tavily" is single-word non-built-in
+    expect(result.turns[0].mcpTools).toEqual(
+      expect.arrayContaining(["playwright", "tavily"]),
+    );
+    expect(result.turns[0].mcpTools).not.toContain("read");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
 
 describe("insights", () => {

@@ -17,6 +17,7 @@ export interface UsageTurn {
   cost: number;
   project?: string;
   activeSkill?: string;
+  mcpTools?: string[];
 }
 
 export interface GroupTotals {
@@ -190,7 +191,8 @@ function parseLine(line: string, sessionId: string): UsageTurn | null {
   };
   const id =
     typeof row.id === "string" && row.id.trim() ? row.id : fallbackId(turnBase);
-  return { id, ...turnBase };
+  const mcpTools = extractMcpServers(message as Record<string, unknown>);
+  return { id, ...turnBase, mcpTools };
 }
 
 const SKILL_NAME_RE = /<skill\s+name="([^"]+)"/;
@@ -220,6 +222,38 @@ function extractSkillName(line: string): string | undefined {
     // ignore parse errors
   }
   return undefined;
+}
+
+const BUILTIN_TOOLS = new Set([
+  "bash",
+  "read",
+  "write",
+  "edit",
+  "grep",
+  "ls",
+  "find",
+]);
+
+function extractMcpServers(
+  message: Record<string, unknown>,
+): string[] | undefined {
+  const content = message.content;
+  if (!Array.isArray(content)) return undefined;
+  const servers = new Set<string>();
+  for (const block of content) {
+    if (
+      typeof block === "object" &&
+      block !== null &&
+      (block as Record<string, unknown>).type === "toolCall"
+    ) {
+      const name = (block as Record<string, unknown>).name;
+      if (typeof name !== "string") continue;
+      if (BUILTIN_TOOLS.has(name)) continue;
+      const firstSegment = name.split("_")[0];
+      if (firstSegment) servers.add(firstSegment);
+    }
+  }
+  return servers.size > 0 ? [...servers] : undefined;
 }
 
 function projectFromCwd(cwd: unknown): string | undefined {
