@@ -225,6 +225,7 @@ function extractSkillName(line: string): string | undefined {
 }
 
 const BUILTIN_TOOLS = new Set([
+  // SDK core tools
   "bash",
   "read",
   "write",
@@ -232,6 +233,17 @@ const BUILTIN_TOOLS = new Set([
   "grep",
   "ls",
   "find",
+  // Agent framework tools
+  "mcp",
+  "subagent",
+  "subagent_status",
+  "get_subagent_result",
+  "Agent",
+  "ask_user_question",
+  "plan_mode_question",
+  "compress",
+  "questionnaire",
+  "web_search",
 ]);
 
 function extractMcpServers(
@@ -437,25 +449,25 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
       byProject.set(t.project, (byProject.get(t.project) ?? 0) + t.cost);
     }
   }
-  const maxProjects = 5;
+  const maxCategoryEntries = 5;
   const allProjectEntries = [...byProject.entries()].sort(
     (a, b) => b[1] - a[1],
   );
   const projectInsights: InsightItem[] = allProjectEntries
-    .slice(0, maxProjects)
+    .slice(0, maxCategoryEntries)
     .map(([project, cost]) => ({
       category: "project",
       label: project,
       cost,
       detail: pct(cost),
     }));
-  if (allProjectEntries.length > maxProjects) {
+  if (allProjectEntries.length > maxCategoryEntries) {
     const remainingCost = allProjectEntries
-      .slice(maxProjects)
+      .slice(maxCategoryEntries)
       .reduce((sum, [, c]) => sum + c, 0);
     projectInsights.push({
       category: "project",
-      label: `+${allProjectEntries.length - maxProjects} more`,
+      label: `+${allProjectEntries.length - maxCategoryEntries} more`,
       cost: remainingCost,
       detail: pct(remainingCost),
     });
@@ -477,20 +489,20 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
     ? [...bySkill.entries()].sort((a, b) => b[1] - a[1])
     : [];
   const skillInsights: InsightItem[] = allSkillEntries
-    .slice(0, maxProjects)
+    .slice(0, maxCategoryEntries)
     .map(([skill, cost]) => ({
       category: "skill",
       label: skill,
       cost,
       detail: pct(cost),
     }));
-  if (allSkillEntries.length > maxProjects) {
+  if (allSkillEntries.length > maxCategoryEntries) {
     const remainingCost = allSkillEntries
-      .slice(maxProjects)
+      .slice(maxCategoryEntries)
       .reduce((sum, [, c]) => sum + c, 0);
     skillInsights.push({
       category: "skill",
-      label: `+${allSkillEntries.length - maxProjects} more`,
+      label: `+${allSkillEntries.length - maxCategoryEntries} more`,
       cost: remainingCost,
       detail: pct(remainingCost),
     });
@@ -507,20 +519,20 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
   }
   const allMcpEntries = [...byMcp.entries()].sort((a, b) => b[1] - a[1]);
   const mcpInsights: InsightItem[] = allMcpEntries
-    .slice(0, maxProjects)
+    .slice(0, maxCategoryEntries)
     .map(([server, cost]) => ({
       category: "mcp",
       label: server,
       cost,
       detail: pct(cost),
     }));
-  if (allMcpEntries.length > maxProjects) {
+  if (allMcpEntries.length > maxCategoryEntries) {
     const remainingCost = allMcpEntries
-      .slice(maxProjects)
+      .slice(maxCategoryEntries)
       .reduce((sum, [, c]) => sum + c, 0);
     mcpInsights.push({
       category: "mcp",
-      label: `+${allMcpEntries.length - maxProjects} more`,
+      label: `+${allMcpEntries.length - maxCategoryEntries} more`,
       cost: remainingCost,
       detail: pct(remainingCost),
     });

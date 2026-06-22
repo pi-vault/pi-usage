@@ -292,6 +292,64 @@ describe("offline scanner", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("does not bleed active skill across session files", async () => {
+    const root = mkTmp();
+    const sessions = join(root, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    // Session 1: has a skill invocation
+    const s1Skill = JSON.stringify({
+      type: "message",
+      id: "u1",
+      timestamp: "2026-05-30T10:00:00Z",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: '<skill name="tdd" location="/p">\nc\n</skill>' },
+        ],
+      },
+    });
+    const s1Turn = JSON.stringify({
+      type: "message",
+      id: "a1",
+      timestamp: "2026-05-30T10:01:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 1 },
+      },
+    });
+    // Session 2: no skill invocation
+    const s2Turn = JSON.stringify({
+      type: "message",
+      id: "a2",
+      timestamp: "2026-05-30T10:02:00Z",
+      message: {
+        role: "assistant",
+        provider: "minimax",
+        model: "m",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 1 },
+      },
+    });
+    writeFileSync(
+      join(sessions, "s1.jsonl"),
+      `${s1Skill}\n${s1Turn}\n`,
+      "utf8",
+    );
+    writeFileSync(join(sessions, "s2.jsonl"), `${s2Turn}\n`, "utf8");
+    const result = await scanOfflineUsage({
+      ...createDefaultDeps(),
+      agentDir: () => root,
+      now: () => Date.parse("2026-05-30T12:00:00Z"),
+    });
+    expect(result.turns).toHaveLength(2);
+    const withSkill = result.turns.find((t) => t.activeSkill === "tdd");
+    const withoutSkill = result.turns.find((t) => t.activeSkill === undefined);
+    expect(withSkill).toBeDefined();
+    expect(withoutSkill).toBeDefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("extracts MCP server names from tool call prefixes", async () => {
     const root = mkTmp();
     const sessions = join(root, "sessions");
