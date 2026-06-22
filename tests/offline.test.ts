@@ -255,6 +255,66 @@ describe("insights", () => {
     expect(buildInsights(turns)).toHaveLength(5);
   });
 
+  it("produces project breakdown insights", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 9,
+        project: "career-ops",
+      },
+      {
+        id: "2",
+        sessionId: "s2",
+        timestamp: 2,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+        project: "dotfiles",
+      },
+    ];
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights.length).toBeGreaterThanOrEqual(2);
+    expect(projectInsights[0].label).toBe("career-ops");
+    expect(projectInsights[0].detail).toContain("90.0%");
+    expect(projectInsights[1].label).toBe("dotfiles");
+  });
+
+  it("omits project insights when no projects are set", () => {
+    const turns = [
+      {
+        id: "1",
+        sessionId: "s1",
+        timestamp: 1,
+        provider: "p",
+        model: "m",
+        input: 10,
+        output: 10,
+        cacheRead: 0,
+        cacheWrite: 0,
+        tokens: 20,
+        cost: 1,
+      },
+    ];
+    const insights = buildInsights(turns);
+    const projectInsights = insights.filter((i) => i.category === "project");
+    expect(projectInsights).toHaveLength(0);
+  });
+
   it("counts parallel sessions by distinct active session ids", () => {
     const sameSessionTurns = [1, 2, 3, 4].map((id) => ({
       id: String(id),

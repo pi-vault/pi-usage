@@ -360,7 +360,24 @@ export function buildInsights(turns: UsageTurn[]): InsightItem[] {
 
   const pct = (n: number) =>
     totalCost > 0 ? `${((100 * n) / totalCost).toFixed(1)}%` : "0.0%";
+
+  const byProject = new Map<string, number>();
+  for (const t of turns) {
+    if (t.project) {
+      byProject.set(t.project, (byProject.get(t.project) ?? 0) + t.cost);
+    }
+  }
+  const projectInsights: InsightItem[] = [...byProject.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([project, cost]) => ({
+      category: "project",
+      label: project,
+      cost,
+      detail: pct(cost),
+    }));
+
   return [
+    ...projectInsights,
     {
       category: "cost",
       label: "Parallel sessions",
