@@ -2,6 +2,10 @@
 
 All notable changes to `@pi-vault/pi-usage` are documented here.
 
+## v0.5.1
+
+- updated `@earendil-works/pi-coding-agent` to `^0.80.2`, `@earendil-works/pi-tui` to `^0.80.2`, `@types/node` to `^26.0.0`, and `vitest` to `^4.1.9`
+
 ## v0.5.0
 
 - added `usage.json` provider toggles so you can disable live providers you do not want queried
