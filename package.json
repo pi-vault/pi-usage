@@ -1,6 +1,6 @@
 {
   "name": "@pi-vault/pi-usage",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "description": "Pi extension that displays aggregated usage statistics across all sessions",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
