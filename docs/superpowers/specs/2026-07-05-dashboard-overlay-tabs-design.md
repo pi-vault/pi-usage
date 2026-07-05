@@ -142,7 +142,7 @@ Renders pill-styled tabs within available width:
 
 - Active tab: `theme.fg("accent", theme.inverse(theme.bold(label)))` -- inverted pill
 - Inactive tabs: `theme.bg("selectedBg", theme.fg("accent", label))` -- subtle background pill
-- Dynamic visibility with `<` / `>` overflow indicators (handles narrow terminals)
+- Dynamic visibility with `‹` / `›` overflow indicators (handles narrow terminals)
 
 These pull colors through the `DashboardTheme` adapter, which delegates to Pi's live theme, ensuring visual consistency with the Pi theme in use.
 
