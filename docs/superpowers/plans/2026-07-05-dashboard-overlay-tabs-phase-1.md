@@ -66,14 +66,16 @@ describe("DashboardTheme", () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/lanh/Developer/pi-vault/pi-usage && npx vitest run tests/dashboard-theme.test.ts
+npx vitest run tests/dashboard-theme.test.ts
 ```
 
-Expected: FAIL -- `noTheme.inverse` is not a function, `noTheme.bg` is not a function.
+Expected: FAIL — `noTheme.inverse` is not a function, `noTheme.bg` is not a function.
 
-- [ ] **Step 3: Add `inverse` and `bg` to DashboardTheme interface and implementations**
+- [ ] **Step 3: Add `inverse` and `bg` to DashboardTheme interface, all implementations, and the test helper**
 
-In `src/tui/dashboard-theme.ts`, apply the following changes:
+This step updates the interface, both production implementations, and the `makeAnsiTheme` test helper atomically so that TypeScript is never in a broken state.
+
+**3a. In `src/tui/dashboard-theme.ts`:**
 
 **Update the `DashboardTheme` interface** (replace the existing interface):
 
@@ -92,9 +94,14 @@ export interface DashboardTheme {
 }
 ```
 
-**Update `DashboardColor`** to include the new color roles (replace the existing type):
+**Update the `DashboardColor` JSDoc and type** (replace the existing comment and type):
 
 ```typescript
+/**
+ * Color roles referenced by the dashboard. Foreground names match
+ * `ThemeColor` entries; `"selectedBg"` maps to the `ThemeBg` palette
+ * and is only valid with `bg()`.
+ */
 export type DashboardColor =
   | "accent"
   | "border"
@@ -134,25 +141,9 @@ export function fromPiTheme(theme: Theme): DashboardTheme {
 
 Note: `bg` casts `color` to `never` because `DashboardColor` is a superset that includes fg-only colors. Only `"selectedBg"` is a valid `ThemeBg` key, but the cast keeps the adapter simple. The caller is responsible for passing valid bg colors.
 
-- [ ] **Step 4: Run new tests to verify they pass**
+**3b. In `tests/dashboard.test.ts`:**
 
-```bash
-cd /Users/lanh/Developer/pi-vault/pi-usage && npx vitest run tests/dashboard-theme.test.ts
-```
-
-Expected: PASS
-
-- [ ] **Step 5: Run all existing tests to verify no regressions**
-
-```bash
-cd /Users/lanh/Developer/pi-vault/pi-usage && npx vitest run
-```
-
-Expected: All tests pass. The existing code still compiles because the new methods are additive.
-
-- [ ] **Step 6: Update `makeAnsiTheme` test helper for the new methods**
-
-In `tests/dashboard.test.ts`, replace the `makeAnsiTheme` function with:
+Replace the `makeAnsiTheme` function with:
 
 ```typescript
 function makeAnsiTheme(): DashboardTheme & {
@@ -189,18 +180,17 @@ function makeAnsiTheme(): DashboardTheme & {
 }
 ```
 
-- [ ] **Step 7: Run all tests again**
+- [ ] **Step 4: Run all tests**
 
 ```bash
-cd /Users/lanh/Developer/pi-vault/pi-usage && npx vitest run
+npx vitest run
 ```
 
-Expected: All tests pass.
+Expected: All tests pass — new theme tests green, existing dashboard tests unaffected.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/lanh/Developer/pi-vault/pi-usage
 git add src/tui/dashboard-theme.ts tests/dashboard-theme.test.ts tests/dashboard.test.ts
 git commit -m "feat(tui): add inverse and bg methods to DashboardTheme
 
