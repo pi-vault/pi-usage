@@ -28,6 +28,10 @@ function makeAnsiTheme(): DashboardTheme & {
       calls.push({ method: "fg", color, text });
       return wrap(`${ANSI_ESCAPE}[38;5;75m`)(text);
     },
+    bg: (color, text) => {
+      calls.push({ method: "bg", color, text });
+      return wrap(`${ANSI_ESCAPE}[48;5;236m`)(text);
+    },
     bold: (text) => {
       calls.push({ method: "bold", text });
       return `${ANSI_ESCAPE}[1m${text}${ANSI_ESCAPE}[22m`;
@@ -35,6 +39,10 @@ function makeAnsiTheme(): DashboardTheme & {
     dim: (text) => {
       calls.push({ method: "dim", text });
       return wrap(`${ANSI_ESCAPE}[38;5;243m`)(text);
+    },
+    inverse: (text) => {
+      calls.push({ method: "inverse", text });
+      return `${ANSI_ESCAPE}[7m${text}${ANSI_ESCAPE}[27m`;
     },
   };
 }
