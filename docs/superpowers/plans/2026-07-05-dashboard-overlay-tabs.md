@@ -17,6 +17,21 @@
 
 ---
 
+## Execution Phases
+
+Each phase is atomic -- all tests pass after completion. Phases 1-3 touch independent files and can run in parallel.
+
+| Phase | Tasks | Description | Result |
+|-------|-------|-------------|--------|
+| **1. Theme foundation** | Task 1 | Add `inverse` + `bg` to `DashboardTheme`, update adapters and test helper | Theme API ready for tab pills |
+| **2. Render utilities** | Task 2 | Create `overlay-render.ts` with `frame()`, `renderTabBar()`, `pad()` + tests | Utilities exist, dashboard unchanged |
+| **3. Constants prep** | Task 3 | Add per-tab `dashboardFooters` alongside legacy `dashboardFooter` | New constants available, legacy kept |
+| **4. Core refactor + tests** | Tasks 4 + 6 | Refactor dashboard state/render/input to tabs + overlay. Update all dashboard tests. | Dashboard is tabbed overlay, tests green |
+| **5. Legacy cleanup** | Task 5 | Remove old `dashboardFooter`, `dashboardBorderChars` | No dead code |
+| **6. Verification** | Task 7 | Full suite, type check, grep for stale references | Confirmed clean |
+
+---
+
 ## File Map
 
 | File                            | Action | Responsibility                                                           |
