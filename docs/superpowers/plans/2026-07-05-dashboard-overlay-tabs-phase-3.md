@@ -72,6 +72,7 @@ export const UI_STRINGS = {
 ```
 
 The resulting footer strings are:
+
 - `statistics`: `[Tab/Shift-Tab] Switch tab • [Left/Right] Period • [Up/Down] Row • [Enter] Expand • [q/Esc] Close`
 - `current`: `[Tab/Shift-Tab] Switch tab • [Left/Right] Provider • [q/Esc] Close`
 - `insights`: `[Tab/Shift-Tab] Switch tab • [Left/Right] Period • [q/Esc] Close`

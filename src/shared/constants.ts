@@ -46,6 +46,27 @@ export const PERIOD_ORDER: UsageWindow[] = [
 
 export const UI_STRINGS = {
   dashboardTitle: "Pi Usage Dashboard",
+  // New per-tab footers (used by the tabbed overlay starting Phase 4)
+  dashboardFooters: {
+    statistics: [
+      "[Tab/Shift-Tab] Switch tab",
+      "[Left/Right] Period",
+      "[Up/Down] Row",
+      "[Enter] Expand",
+      "[q/Esc] Close",
+    ].join(" • "),
+    current: [
+      "[Tab/Shift-Tab] Switch tab",
+      "[Left/Right] Provider",
+      "[q/Esc] Close",
+    ].join(" • "),
+    insights: [
+      "[Tab/Shift-Tab] Switch tab",
+      "[Left/Right] Period",
+      "[q/Esc] Close",
+    ].join(" • "),
+  },
+  // Legacy -- removed in Phase 5 when dashboard.ts stops referencing them
   dashboardFooter: [
     "[Tab/Shift-Tab] Provider",
     "[Left/Right] Period",
