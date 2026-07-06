@@ -23,6 +23,12 @@ import {
   wrapVisible,
 } from "./dashboard-theme.ts";
 import {
+  type DashboardTab,
+  frame,
+  frameContentWidth,
+  renderTabBar,
+} from "./overlay-render.ts";
+import {
   formatAge,
   formatAbbrev,
   formatCurrency,
@@ -52,6 +58,20 @@ const DEFAULT_PERIOD_INDEX = (() => {
   const idx = PERIODS.indexOf(UI_STRINGS.dashboardDefaultPeriod);
   return idx >= 0 ? idx : 0;
 })();
+
+type DashboardTabId = "statistics" | "current" | "insights";
+
+const DASHBOARD_TABS: DashboardTab[] = [
+  {
+    id: "statistics",
+    label: UI_STRINGS.dashboardBorderedSectionTitles.usageStatistics,
+  },
+  {
+    id: "current",
+    label: UI_STRINGS.dashboardBorderedSectionTitles.currentUsage,
+  },
+  { id: "insights", label: UI_STRINGS.dashboardBorderedSectionTitles.insights },
+];
 
 function normalizePlan(provider: ProviderUsageSnapshot): string | undefined {
   const raw = provider.planName?.trim();
@@ -103,16 +123,6 @@ function initialLiveProviderIndex(state: UsageCoreState): number {
   return withData >= 0 ? withData : 0;
 }
 
-function horizontalBorder(width: number, left: string, right: string): string {
-  if (width <= 2) return left + right;
-  return `${left}${"─".repeat(width - 2)}${right}`;
-}
-
-function borderSeparator(width: number): string {
-  if (width <= 2) return "├┤";
-  return `├${"─".repeat(width - 2)}┤`;
-}
-
 export interface UsageDashboardOptions {
   /**
    * Optional TUI instance. When provided, the dashboard subscribes to live
@@ -131,10 +141,11 @@ export interface UsageDashboardOptions {
 }
 
 export class UsageDashboardComponent implements Component {
+  private activeTab: DashboardTabId = "statistics";
   private periodIndex = DEFAULT_PERIOD_INDEX;
+  private insightsPeriodIndex = DEFAULT_PERIOD_INDEX;
   private rowIndex = 0;
   private expandedProvider: string | null = null;
-  private showInsights = false;
   private currentUsageProviderIndex: number;
   private readonly theme: DashboardTheme;
   private readonly cancelScan?: () => void;
@@ -331,44 +342,7 @@ export class UsageDashboardComponent implements Component {
     ];
   }
 
-  private sectionTitle(text: string): string {
-    return this.theme.fg("accent", this.theme.bold(text));
-  }
-
-  private borderLine(width: number): string {
-    return this.theme.fg(
-      "border",
-      horizontalBorder(
-        width,
-        UI_STRINGS.dashboardBorderChars.topLeft,
-        UI_STRINGS.dashboardBorderChars.topRight,
-      ),
-    );
-  }
-
-  private currentUsageHeaderSeparator(width: number): string {
-    return this.theme.fg("borderMuted", borderSeparator(width));
-  }
-
-  private bottomBorder(width: number): string {
-    return this.theme.fg(
-      "border",
-      horizontalBorder(
-        width,
-        UI_STRINGS.dashboardBorderChars.bottomLeft,
-        UI_STRINGS.dashboardBorderChars.bottomRight,
-      ),
-    );
-  }
-
-  private renderUsageStatistics(w: number, lines: string[]): void {
-    lines.push(
-      this.sectionTitle(
-        UI_STRINGS.dashboardBorderedSectionTitles.usageStatistics,
-      ),
-    );
-    lines.push("");
-
+  private renderUsageStatisticsTab(w: number, lines: string[]): void {
     lines.push(
       ...this.renderTabs(
         PERIODS.map((period) => PERIOD_LABELS[period]),
@@ -380,18 +354,6 @@ export class UsageDashboardComponent implements Component {
       lines.push(this.theme.dim("Loading session history..."));
     }
     lines.push("");
-
-    if (this.showInsights) {
-      lines.push(
-        this.sectionTitle(UI_STRINGS.dashboardBorderedSectionTitles.insights),
-      );
-      if (this.state.insights.length === 0) {
-        lines.push(this.theme.dim("No insights yet."));
-      } else {
-        lines.push(...this.renderInsightsByCategory(w));
-      }
-      return;
-    }
 
     const period = this.currentPeriod();
     if (!period || period.total.messageCount === 0) {
@@ -479,12 +441,25 @@ export class UsageDashboardComponent implements Component {
     return lines;
   }
 
-  private renderCurrentUsage(w: number, lines: string[]): void {
+  private renderInsightsTab(w: number, lines: string[]): void {
     lines.push(
-      this.sectionTitle(UI_STRINGS.dashboardBorderedSectionTitles.currentUsage),
+      ...this.renderTabs(
+        PERIODS.map((period) => PERIOD_LABELS[period]),
+        this.insightsPeriodIndex,
+        w,
+      ),
     );
-    lines.push(this.currentUsageHeaderSeparator(w));
+    lines.push("");
 
+    // TODO: filter insights by period when backend supports per-period data
+    if (this.state.insights.length === 0) {
+      lines.push(this.theme.dim("No insights yet."));
+    } else {
+      lines.push(...this.renderInsightsByCategory(w));
+    }
+  }
+
+  private renderCurrentUsageTab(w: number, lines: string[]): void {
     const providers = liveProviders(this.state);
     if (providers.length === 0) {
       lines.push(this.theme.dim("No live usage details."));
@@ -529,6 +504,9 @@ export class UsageDashboardComponent implements Component {
         lines.push(`${labelStyled} ${value}${unitSuffix}`);
       }
     }
+
+    // Diagnostics (previously a separate section, now housed in Current Usage)
+    this.renderDiagnostics(lines);
   }
 
   private renderDiagnostics(lines: string[]): void {
@@ -541,7 +519,10 @@ export class UsageDashboardComponent implements Component {
     if (diagnosticNotes.length === 0) return;
     lines.push("");
     lines.push(
-      this.sectionTitle(UI_STRINGS.dashboardBorderedSectionTitles.notes),
+      this.theme.fg(
+        "accent",
+        this.theme.bold(UI_STRINGS.dashboardBorderedSectionTitles.notes),
+      ),
     );
     for (const note of diagnosticNotes) {
       lines.push(this.theme.dim(note));
@@ -549,20 +530,40 @@ export class UsageDashboardComponent implements Component {
   }
 
   private renderFooter(width: number): string {
-    return this.theme.dim(truncateVisible(UI_STRINGS.dashboardFooter, width));
+    return this.theme.dim(
+      truncateVisible(UI_STRINGS.dashboardFooters[this.activeTab], width),
+    );
   }
 
   render(width: number): string[] {
     const w = Math.max(8, width);
-    const lines: string[] = [this.borderLine(w)];
-    this.renderUsageStatistics(w, lines);
+    const contentWidth = frameContentWidth(w);
+    const lines: string[] = [];
+
+    // Tab bar
+    lines.push(
+      renderTabBar(DASHBOARD_TABS, this.activeTab, contentWidth, this.theme),
+    );
     lines.push("");
-    this.renderCurrentUsage(w, lines);
-    this.renderDiagnostics(lines);
+
+    // Active tab content
+    switch (this.activeTab) {
+      case "statistics":
+        this.renderUsageStatisticsTab(contentWidth, lines);
+        break;
+      case "current":
+        this.renderCurrentUsageTab(contentWidth, lines);
+        break;
+      case "insights":
+        this.renderInsightsTab(contentWidth, lines);
+        break;
+    }
+
+    // Footer
     lines.push("");
-    lines.push(this.renderFooter(w));
-    lines.push(this.bottomBorder(w));
-    return lines.map((line) => truncateVisible(line, w));
+    lines.push(this.renderFooter(contentWidth));
+
+    return frame(lines, w, this.theme);
   }
 
   private movePeriod(delta: number): void {
@@ -580,25 +581,14 @@ export class UsageDashboardComponent implements Component {
       providers.length;
   }
 
-  handleInput(data: string): void {
-    if (data === "q" || matchesKey(data, Key.escape)) {
-      this.invalidate();
-      this.cancelScan?.();
-      this.done();
-      return;
-    }
-    if (data === "v") {
-      this.showInsights = !this.showInsights;
-      return;
-    }
-    if (matchesKey(data, Key.tab)) {
-      this.moveProvider(1);
-      return;
-    }
-    if (matchesKey(data, SHIFT_TAB_KEY)) {
-      this.moveProvider(-1);
-      return;
-    }
+  private switchTab(delta: number): void {
+    const i = DASHBOARD_TABS.findIndex((t) => t.id === this.activeTab);
+    this.activeTab = DASHBOARD_TABS[
+      (i + delta + DASHBOARD_TABS.length) % DASHBOARD_TABS.length
+    ].id as DashboardTabId;
+  }
+
+  private handleStatisticsInput(data: string): void {
     if (matchesKey(data, Key.left)) {
       this.movePeriod(-1);
       return;
@@ -623,6 +613,60 @@ export class UsageDashboardComponent implements Component {
       if (!provider) return;
       this.expandedProvider =
         this.expandedProvider === provider ? null : provider;
+    }
+  }
+
+  private handleCurrentUsageInput(data: string): void {
+    if (matchesKey(data, Key.left)) {
+      this.moveProvider(-1);
+      return;
+    }
+    if (matchesKey(data, Key.right)) {
+      this.moveProvider(1);
+      return;
+    }
+  }
+
+  private handleInsightsInput(data: string): void {
+    const delta = matchesKey(data, Key.left)
+      ? -1
+      : matchesKey(data, Key.right)
+        ? 1
+        : 0;
+    if (delta) {
+      this.insightsPeriodIndex =
+        (this.insightsPeriodIndex + delta + PERIODS.length) % PERIODS.length;
+    }
+  }
+
+  handleInput(data: string): void {
+    // Global keys
+    if (data === "q" || matchesKey(data, Key.escape)) {
+      this.invalidate();
+      this.cancelScan?.();
+      this.done();
+      return;
+    }
+    if (matchesKey(data, Key.tab)) {
+      this.switchTab(1);
+      return;
+    }
+    if (matchesKey(data, SHIFT_TAB_KEY)) {
+      this.switchTab(-1);
+      return;
+    }
+
+    // Per-tab contextual keys
+    switch (this.activeTab) {
+      case "statistics":
+        this.handleStatisticsInput(data);
+        break;
+      case "current":
+        this.handleCurrentUsageInput(data);
+        break;
+      case "insights":
+        this.handleInsightsInput(data);
+        break;
     }
   }
 
@@ -670,18 +714,28 @@ export async function openDashboard(
   state: UsageCoreState,
   cancelScan?: () => void,
 ): Promise<void> {
-  await ctx.ui.custom<void>((tui, theme, _keys, done) => {
-    const piTheme = theme as unknown as Parameters<typeof fromPiTheme>[0];
-    const dashboardTheme: DashboardTheme =
-      piTheme &&
-      typeof (piTheme as { fg?: unknown }).fg === "function" &&
-      typeof (piTheme as { bold?: unknown }).bold === "function"
-        ? fromPiTheme(piTheme)
-        : noTheme;
-    return new UsageDashboardComponent(state, done, {
-      tui,
-      theme: dashboardTheme,
-      cancelScan,
-    });
-  });
+  await ctx.ui.custom<void>(
+    (tui, theme, _keys, done) => {
+      const piTheme = theme as unknown as Parameters<typeof fromPiTheme>[0];
+      const dashboardTheme: DashboardTheme =
+        piTheme &&
+        typeof (piTheme as { fg?: unknown }).fg === "function" &&
+        typeof (piTheme as { bold?: unknown }).bold === "function"
+          ? fromPiTheme(piTheme)
+          : noTheme;
+      return new UsageDashboardComponent(state, done, {
+        tui,
+        theme: dashboardTheme,
+        cancelScan,
+      });
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        anchor: "center",
+        maxHeight: "85%",
+        width: "92%",
+      },
+    },
+  );
 }
