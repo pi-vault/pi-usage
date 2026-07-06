@@ -21,21 +21,27 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 export interface DashboardTheme {
   /** Foreground color for a themed string. */
   fg: (color: DashboardColor, text: string) => string;
+  /** Background color for a themed string. */
+  bg: (color: DashboardColor, text: string) => string;
   /** Bold modifier. */
   bold: (text: string) => string;
   /** Dim modifier. */
   dim: (text: string) => string;
+  /** Inverse modifier (swap fg/bg). */
+  inverse: (text: string) => string;
 }
 
 /**
- * Color roles referenced by the dashboard. Each name matches a `ThemeColor`
- * entry on the live Pi theme so the adapter can pass them straight through to
- * `theme.fg(...)`.
+ * Color roles referenced by the dashboard. Foreground names match
+ * `ThemeColor` entries; `"selectedBg"` maps to the `ThemeBg` palette
+ * and is only valid with `bg()`.
  */
 export type DashboardColor =
   | "accent"
   | "border"
+  | "borderAccent"
   | "borderMuted"
+  | "selectedBg"
   | "muted"
   | "dim"
   | "text";
@@ -46,8 +52,10 @@ export type DashboardColor =
  */
 export const noTheme: DashboardTheme = {
   fg: (_color, text) => text,
+  bg: (_color, text) => text,
   bold: (text) => text,
   dim: (text) => text,
+  inverse: (text) => text,
 };
 
 /**
@@ -58,9 +66,11 @@ export const noTheme: DashboardTheme = {
  */
 export function fromPiTheme(theme: Theme): DashboardTheme {
   return {
-    fg: (color, text) => theme.fg(color, text),
+    fg: (color, text) => theme.fg(color as never, text),
+    bg: (color, text) => theme.bg(color as never, text),
     bold: (text) => theme.bold(text),
     dim: (text) => theme.fg("dim", text),
+    inverse: (text) => theme.inverse(text),
   };
 }
 
