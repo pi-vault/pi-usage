@@ -12,9 +12,9 @@
 
 **Files modified:**
 
-| File | Action |
-|------|--------|
-| `src/tui/dashboard.ts` | Refactor to tabbed overlay |
+| File                      | Action                               |
+| ------------------------- | ------------------------------------ |
+| `src/tui/dashboard.ts`    | Refactor to tabbed overlay           |
 | `tests/dashboard.test.ts` | Update all assertions for new layout |
 
 ---
@@ -546,41 +546,41 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace the `"renders usage statistics + current usage with selected provider details"` test:
 
 ```typescript
-  it("renders Usage Statistics tab by default with table and legend", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-    const out = c.render(140).join("\n");
-
-    // Frame borders
-    expect(out).toContain("\u2501"); // ━
-    expect(out).toContain("\u250F"); // ┏
-    expect(out).toContain("\u251B"); // ┛
-
-    // Tab bar shows all three tabs
-    expect(out).toContain("Usage Statistics");
-    expect(out).toContain("Current Usage");
-    expect(out).toContain("Insights");
-
-    // Default period is All Time
-    expect(out).toContain("[All Time]");
-    expect(out).toContain("Provider / Model");
-    expect(out).toContain("openai-codex");
-    expect(out).toContain("428k");
-
-    // Legend
-    expect(out).toContain(
-      "Tokens = Input + Output + CacheW \u2022 \u2191In = Input + CacheW \u2022 \u2193Out = Output \u2022 CacheR = Cache Read \u2022 CacheW = Cache Write",
-    );
-
-    // Current Usage content should NOT be visible on the Statistics tab
-    expect(out).not.toContain("Command Code (Go) \u2022 live \u2022 4s old");
-    expect(out).not.toContain("57% left");
-
-    // No legacy layout artifacts
-    expect(out).not.toContain("\u256D"); // ╭ old border
-    expect(out).not.toContain("\u256F"); // ╯ old border
+it("renders Usage Statistics tab by default with table and legend", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+  const out = c.render(140).join("\n");
+
+  // Frame borders
+  expect(out).toContain("\u2501"); // ━
+  expect(out).toContain("\u250F"); // ┏
+  expect(out).toContain("\u251B"); // ┛
+
+  // Tab bar shows all three tabs
+  expect(out).toContain("Usage Statistics");
+  expect(out).toContain("Current Usage");
+  expect(out).toContain("Insights");
+
+  // Default period is All Time
+  expect(out).toContain("[All Time]");
+  expect(out).toContain("Provider / Model");
+  expect(out).toContain("openai-codex");
+  expect(out).toContain("428k");
+
+  // Legend
+  expect(out).toContain(
+    "Tokens = Input + Output + CacheW \u2022 \u2191In = Input + CacheW \u2022 \u2193Out = Output \u2022 CacheR = Cache Read \u2022 CacheW = Cache Write",
+  );
+
+  // Current Usage content should NOT be visible on the Statistics tab
+  expect(out).not.toContain("Command Code (Go) \u2022 live \u2022 4s old");
+  expect(out).not.toContain("57% left");
+
+  // No legacy layout artifacts
+  expect(out).not.toContain("\u256D"); // ╭ old border
+  expect(out).not.toContain("\u256F"); // ╯ old border
+});
 ```
 
 ---
@@ -590,28 +590,28 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Add after the previous test:
 
 ```typescript
-  it("renders Current Usage tab with provider details and diagnostics", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    // Provider details
-    expect(out).toContain("Command Code (Go) \u2022 live \u2022 4s old");
-    expect(out).toContain("57% left");
-    expect(out).toContain(expectedResetText(Date.parse("2026-06-07T11:47:00")));
-    expect(out).toContain("$4.29/$10.00");
-
-    // Diagnostics appear in Current Usage tab
-    expect(out).toContain("Subscription endpoint unavailable.");
-    expect(out).toContain("Live cache is unavailable.");
-
-    // Usage Statistics table should NOT be visible
-    expect(out).not.toContain("Provider / Model");
-    expect(out).not.toContain("[All Time]");
+it("renders Current Usage tab with provider details and diagnostics", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  // Provider details
+  expect(out).toContain("Command Code (Go) \u2022 live \u2022 4s old");
+  expect(out).toContain("57% left");
+  expect(out).toContain(expectedResetText(Date.parse("2026-06-07T11:47:00")));
+  expect(out).toContain("$4.29/$10.00");
+
+  // Diagnostics appear in Current Usage tab
+  expect(out).toContain("Subscription endpoint unavailable.");
+  expect(out).toContain("Live cache is unavailable.");
+
+  // Usage Statistics table should NOT be visible
+  expect(out).not.toContain("Provider / Model");
+  expect(out).not.toContain("[All Time]");
+});
 ```
 
 ---
@@ -621,38 +621,38 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Add after the previous test:
 
 ```typescript
-  it("renders Insights tab with insights grouped by category", () => {
-    const state = mkState();
-    state.insights = [
-      { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
-      { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
-      {
-        category: "cost",
-        label: "Large context",
-        cost: 5,
-        detail: "50.0% over 150k context",
-      },
-    ];
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Insights tab (Tab twice)
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const out = c.render(100).join("\n");
-
-    expect(out).toContain("Projects");
-    expect(out).toContain("career-ops");
-    expect(out).toContain("90.0%");
-    expect(out).toContain("Cost patterns");
-    expect(out).toContain("Large context");
-
-    // Should have its own period selector
-    expect(out).toContain("[All Time]");
-
-    // Usage Statistics content should NOT be visible
-    expect(out).not.toContain("Provider / Model");
+it("renders Insights tab with insights grouped by category", () => {
+  const state = mkState();
+  state.insights = [
+    { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
+    { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
+    {
+      category: "cost",
+      label: "Large context",
+      cost: 5,
+      detail: "50.0% over 150k context",
+    },
+  ];
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Insights tab (Tab twice)
+  c.handleInput("\t");
+  c.handleInput("\t");
+  const out = c.render(100).join("\n");
+
+  expect(out).toContain("Projects");
+  expect(out).toContain("career-ops");
+  expect(out).toContain("90.0%");
+  expect(out).toContain("Cost patterns");
+  expect(out).toContain("Large context");
+
+  // Should have its own period selector
+  expect(out).toContain("[All Time]");
+
+  // Usage Statistics content should NOT be visible
+  expect(out).not.toContain("Provider / Model");
+});
 ```
 
 ---
@@ -662,32 +662,32 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Add after the previous test:
 
 ```typescript
-  it("has independent period selector for Insights tab", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-
-    // Change Statistics tab period to Today
-    c.handleInput("\u001b[D"); // Left (All Time → Last Week)
-    c.handleInput("\u001b[D"); // Left (Last Week → This Week)
-    c.handleInput("\u001b[D"); // Left (This Week → Today)
-    expect(c.render(120).join("\n")).toContain("[Today]");
-
-    // Switch to Insights tab
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const insightsOut = c.render(120).join("\n");
-    // Insights should still be on All Time (independent period)
-    expect(insightsOut).toContain("[All Time]");
-
-    // Change Insights period
-    c.handleInput("\u001b[D"); // Left
-    expect(c.render(120).join("\n")).toContain("[Last Week]");
-
-    // Switch back to Statistics tab and verify its period is still Today
-    c.handleInput("\t"); // Insights → Statistics (wraps)
-    expect(c.render(120).join("\n")).toContain("[Today]");
+it("has independent period selector for Insights tab", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+
+  // Change Statistics tab period to Today
+  c.handleInput("\u001b[D"); // Left (All Time → Last Week)
+  c.handleInput("\u001b[D"); // Left (Last Week → This Week)
+  c.handleInput("\u001b[D"); // Left (This Week → Today)
+  expect(c.render(120).join("\n")).toContain("[Today]");
+
+  // Switch to Insights tab
+  c.handleInput("\t");
+  c.handleInput("\t");
+  const insightsOut = c.render(120).join("\n");
+  // Insights should still be on All Time (independent period)
+  expect(insightsOut).toContain("[All Time]");
+
+  // Change Insights period
+  c.handleInput("\u001b[D"); // Left
+  expect(c.render(120).join("\n")).toContain("[Last Week]");
+
+  // Switch back to Statistics tab and verify its period is still Today
+  c.handleInput("\t"); // Insights → Statistics (wraps)
+  expect(c.render(120).join("\n")).toContain("[Today]");
+});
 ```
 
 ---
@@ -697,48 +697,48 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"aligns quota bars by shared label width across available windows"`:
 
 ```typescript
-  it("aligns quota bars by shared label width across available windows", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "5h",
-        label: "5h",
-        usedPercent: 50,
-        resetAt: Date.now() + 3600000,
-      },
-      {
-        key: "weekly",
-        label: "Weekly",
-        usedPercent: 10,
-        resetAt: Date.now() + 86400000 * 7,
-      },
-    ]);
+it("aligns quota bars by shared label width across available windows", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "5h",
+      label: "5h",
+      usedPercent: 50,
+      resetAt: Date.now() + 3600000,
+    },
+    {
+      key: "weekly",
+      label: "Weekly",
+      usedPercent: 10,
+      resetAt: Date.now() + 86400000 * 7,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const lines = c.render(200);
-
-    const line5h = lines.find(
-      (l) => l.includes("5h") && l.includes("% left") && l.includes("["),
-    );
-    const lineWeekly = lines.find(
-      (l) => l.includes("Weekly") && l.includes("% left") && l.includes("["),
-    );
-
-    expect(line5h).toBeDefined();
-    expect(lineWeekly).toBeDefined();
-
-    // Opening brackets must align vertically
-    const bracket5h = line5h?.indexOf("[") ?? -1;
-    const bracketWeekly = lineWeekly?.indexOf("[") ?? -1;
-    expect(bracket5h).toBe(bracketWeekly);
-
-    // Shorter label is padded to match the longest available-window label
-    expect(line5h).toMatch(/5h\s+:/);
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const lines = c.render(200);
+
+  const line5h = lines.find(
+    (l) => l.includes("5h") && l.includes("% left") && l.includes("["),
+  );
+  const lineWeekly = lines.find(
+    (l) => l.includes("Weekly") && l.includes("% left") && l.includes("["),
+  );
+
+  expect(line5h).toBeDefined();
+  expect(lineWeekly).toBeDefined();
+
+  // Opening brackets must align vertically
+  const bracket5h = line5h?.indexOf("[") ?? -1;
+  const bracketWeekly = lineWeekly?.indexOf("[") ?? -1;
+  expect(bracket5h).toBe(bracketWeekly);
+
+  // Shorter label is padded to match the longest available-window label
+  expect(line5h).toMatch(/5h\s+:/);
+});
 ```
 
 ---
@@ -748,28 +748,28 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"rounds fractional usedPercent to integer remaining percentage"`:
 
 ```typescript
-  it("rounds fractional usedPercent to integer remaining percentage", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "cycle",
-        label: "Cycle",
-        usedPercent: 43.7,
-        resetAt: Date.now() + 3600000,
-      },
-    ]);
+it("rounds fractional usedPercent to integer remaining percentage", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "cycle",
+      label: "Cycle",
+      usedPercent: 43.7,
+      resetAt: Date.now() + 3600000,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    // 100 - 43.7 = 56.3, rounded to 56
-    expect(out).toContain("56% left");
-    expect(out).not.toContain("56.3%");
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  // 100 - 43.7 = 56.3, rounded to 56
+  expect(out).toContain("56% left");
+  expect(out).not.toContain("56.3%");
+});
 ```
 
 ---
@@ -779,36 +779,36 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"formats same-day reset as HH:mm only"`:
 
 ```typescript
-  it("formats same-day reset as HH:mm only", () => {
-    const now = new Date();
-    const sameDayReset = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      14,
-      30,
-    ).getTime();
+it("formats same-day reset as HH:mm only", () => {
+  const now = new Date();
+  const sameDayReset = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    14,
+    30,
+  ).getTime();
 
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "cycle",
-        label: "Cycle",
-        usedPercent: 50,
-        resetAt: sameDayReset,
-      },
-    ]);
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "cycle",
+      label: "Cycle",
+      usedPercent: 50,
+      resetAt: sameDayReset,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    expect(out).toContain("(resets 14:30)");
-    expect(out).not.toContain(" on ");
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  expect(out).toContain("(resets 14:30)");
+  expect(out).not.toContain(" on ");
+});
 ```
 
 ---
@@ -818,26 +818,26 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"formats cross-day reset as HH:mm on D MMM"`:
 
 ```typescript
-  it("formats cross-day reset as HH:mm on D MMM", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "cycle",
-        label: "Cycle",
-        usedPercent: 50,
-        resetAt: Date.parse("2026-06-07T11:47:00"),
-      },
-    ]);
+it("formats cross-day reset as HH:mm on D MMM", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "cycle",
+      label: "Cycle",
+      usedPercent: 50,
+      resetAt: Date.parse("2026-06-07T11:47:00"),
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    expect(out).toContain(expectedResetText(Date.parse("2026-06-07T11:47:00")));
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  expect(out).toContain(expectedResetText(Date.parse("2026-06-07T11:47:00")));
+});
 ```
 
 ---
@@ -847,25 +847,25 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders reset unavailable when resetAt is absent"`:
 
 ```typescript
-  it("renders reset unavailable when resetAt is absent", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "cycle",
-        label: "Cycle",
-        usedPercent: 50,
-      },
-    ]);
+it("renders reset unavailable when resetAt is absent", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "cycle",
+      label: "Cycle",
+      usedPercent: 50,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    expect(out).toContain("(reset unavailable)");
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  expect(out).toContain("(reset unavailable)");
+});
 ```
 
 ---
@@ -875,61 +875,61 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders unavailable windows without bar and does not affect alignment"`:
 
 ```typescript
-  it("renders unavailable windows without bar and does not affect alignment", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "5h",
-        label: "5h",
-        usedPercent: 50,
-        resetAt: Date.now() + 3600000,
-      },
-      {
-        key: "daily",
-        label: "Daily",
-        usedPercent: 30,
-        resetAt: Date.now() + 86400000,
-      },
-      {
-        key: "verylong",
-        label: "VeryLongName",
-        usedPercent: 10,
-        unavailableReason: "Not applicable",
-      },
-    ]);
+it("renders unavailable windows without bar and does not affect alignment", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "5h",
+      label: "5h",
+      usedPercent: 50,
+      resetAt: Date.now() + 3600000,
+    },
+    {
+      key: "daily",
+      label: "Daily",
+      usedPercent: 30,
+      resetAt: Date.now() + 86400000,
+    },
+    {
+      key: "verylong",
+      label: "VeryLongName",
+      usedPercent: 10,
+      unavailableReason: "Not applicable",
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const lines = c.render(200);
-
-    const line5h = lines.find(
-      (l) => l.includes("5h") && l.includes("% left") && l.includes("["),
-    );
-    const lineDaily = lines.find(
-      (l) => l.includes("Daily") && l.includes("% left") && l.includes("["),
-    );
-    const lineLong = lines.find(
-      (l) => l.includes("VeryLongName") && l.includes("Not applicable"),
-    );
-
-    expect(line5h).toBeDefined();
-    expect(lineDaily).toBeDefined();
-    expect(lineLong).toBeDefined();
-
-    // Unavailable window has no bar or percentage
-    expect(lineLong).not.toContain("% left");
-
-    // Available windows' bars align (maxLabelWidth from "5h" and "Daily" only)
-    const bracket5h = line5h?.indexOf("[") ?? -1;
-    const bracketDaily = lineDaily?.indexOf("[") ?? -1;
-    expect(bracket5h).toBe(bracketDaily);
-
-    // "5h" is padded to "Daily" width (5 chars), not "VeryLongName" width
-    expect(line5h).toMatch(/5h\s+:/);
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const lines = c.render(200);
+
+  const line5h = lines.find(
+    (l) => l.includes("5h") && l.includes("% left") && l.includes("["),
+  );
+  const lineDaily = lines.find(
+    (l) => l.includes("Daily") && l.includes("% left") && l.includes("["),
+  );
+  const lineLong = lines.find(
+    (l) => l.includes("VeryLongName") && l.includes("Not applicable"),
+  );
+
+  expect(line5h).toBeDefined();
+  expect(lineDaily).toBeDefined();
+  expect(lineLong).toBeDefined();
+
+  // Unavailable window has no bar or percentage
+  expect(lineLong).not.toContain("% left");
+
+  // Available windows' bars align (maxLabelWidth from "5h" and "Daily" only)
+  const bracket5h = line5h?.indexOf("[") ?? -1;
+  const bracketDaily = lineDaily?.indexOf("[") ?? -1;
+  expect(bracket5h).toBe(bracketDaily);
+
+  // "5h" is padded to "Daily" width (5 chars), not "VeryLongName" width
+  expect(line5h).toMatch(/5h\s+:/);
+});
 ```
 
 ---
@@ -939,29 +939,29 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders quota row without ratio when used/limit/unit are incomplete"`:
 
 ```typescript
-  it("renders quota row without ratio when used/limit/unit are incomplete", () => {
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "cycle",
-        label: "Cycle",
-        usedPercent: 50,
-        resetAt: Date.now() + 3600000,
-      },
-    ]);
+it("renders quota row without ratio when used/limit/unit are incomplete", () => {
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "cycle",
+      label: "Cycle",
+      usedPercent: 50,
+      resetAt: Date.now() + 3600000,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const out = c.render(140).join("\n");
-
-    expect(out).toContain("50% left");
-    // No ratio suffix should appear
-    expect(out).not.toContain(" - $");
-    expect(out).not.toContain(" requests");
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const out = c.render(140).join("\n");
+
+  expect(out).toContain("50% left");
+  // No ratio suffix should appear
+  expect(out).not.toContain(" - $");
+  expect(out).not.toContain(" requests");
+});
 ```
 
 ---
@@ -971,24 +971,24 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"wraps joined legend and supports tab-based provider navigation"`:
 
 ```typescript
-  it("supports provider navigation with left/right in Current Usage tab", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-
-    // Left arrow cycles providers backward: Command Code (4) -> OpenCode Go (3)
-    c.handleInput("\u001b[D"); // Left
-    let out = c.render(120).join("\n");
-    expect(out).toContain("[OpenCode Go]");
-    expect(out).toContain("Credits: $12.50");
-
-    // Right arrow cycles forward: OpenCode Go (3) -> Command Code (4)
-    c.handleInput("\u001b[C"); // Right
-    out = c.render(120).join("\n");
-    expect(out).toContain("[Command Code]");
+it("supports provider navigation with left/right in Current Usage tab", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+
+  // Left arrow cycles providers backward: Command Code (4) -> OpenCode Go (3)
+  c.handleInput("\u001b[D"); // Left
+  let out = c.render(120).join("\n");
+  expect(out).toContain("[OpenCode Go]");
+  expect(out).toContain("Credits: $12.50");
+
+  // Right arrow cycles forward: OpenCode Go (3) -> Command Code (4)
+  c.handleInput("\u001b[C"); // Right
+  out = c.render(120).join("\n");
+  expect(out).toContain("[Command Code]");
+});
 ```
 
 ---
@@ -998,28 +998,28 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"uses enter/space for expand, v for insights, and left/right for period changes"`:
 
 ```typescript
-  it("uses enter/space for expand and left/right for period changes in Statistics tab", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-
-    // Enter expands the selected provider row to reveal its model rows.
-    c.handleInput("\r");
-    expect(c.render(120).join("\n")).toContain("gpt-5");
-
-    // Left/Right change the period. Default is All Time (index 3); one Left
-    // press moves to Last Week.
-    c.handleInput("\u001b[D");
-    expect(c.render(120).join("\n")).toContain("[Last Week]");
-
-    // Two more Right presses move through This Week back to Today.
-    c.handleInput("\u001b[C");
-    c.handleInput("\u001b[C");
-    expect(c.render(120).join("\n")).toContain("[Today]");
-
-    // Period changes reset the selected row back to 0.
-    expect(c.render(120).join("\n")).toContain("openai-codex");
+it("uses enter/space for expand and left/right for period changes in Statistics tab", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+
+  // Enter expands the selected provider row to reveal its model rows.
+  c.handleInput("\r");
+  expect(c.render(120).join("\n")).toContain("gpt-5");
+
+  // Left/Right change the period. Default is All Time (index 3); one Left
+  // press moves to Last Week.
+  c.handleInput("\u001b[D");
+  expect(c.render(120).join("\n")).toContain("[Last Week]");
+
+  // Two more Right presses move through This Week back to Today.
+  c.handleInput("\u001b[C");
+  c.handleInput("\u001b[C");
+  expect(c.render(120).join("\n")).toContain("[Today]");
+
+  // Period changes reset the selected row back to 0.
+  expect(c.render(120).join("\n")).toContain("openai-codex");
+});
 ```
 
 ---
@@ -1029,39 +1029,39 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders insights grouped by category"`:
 
 ```typescript
-  it("renders insights grouped by category in Insights tab", () => {
-    const state = mkState();
-    state.insights = [
-      { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
-      { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
-      {
-        category: "cost",
-        label: "Large context",
-        cost: 5,
-        detail: "50.0% over 150k context",
-      },
-    ];
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Insights tab (Tab twice)
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const lines = c.render(100);
-    const out = lines.join("\n");
-    expect(out).toContain("Projects");
-    expect(out).toContain("career-ops");
-    expect(out).toContain("90.0%");
-    expect(out).toContain("Cost patterns");
-    expect(out).toContain("Large context");
-    // Verify table structure for project category
-    const projectsIdx = lines.findIndex((l) => l.includes("Projects"));
-    expect(projectsIdx).toBeGreaterThan(-1);
-    expect(lines[projectsIdx]).toContain("% of usage");
-    expect(lines[projectsIdx + 1]).toContain("career-ops");
-    // Verify bullet-list format for cost category
-    expect(out).toContain("  - Large context:");
+it("renders insights grouped by category in Insights tab", () => {
+  const state = mkState();
+  state.insights = [
+    { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
+    { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
+    {
+      category: "cost",
+      label: "Large context",
+      cost: 5,
+      detail: "50.0% over 150k context",
+    },
+  ];
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Insights tab (Tab twice)
+  c.handleInput("\t");
+  c.handleInput("\t");
+  const lines = c.render(100);
+  const out = lines.join("\n");
+  expect(out).toContain("Projects");
+  expect(out).toContain("career-ops");
+  expect(out).toContain("90.0%");
+  expect(out).toContain("Cost patterns");
+  expect(out).toContain("Large context");
+  // Verify table structure for project category
+  const projectsIdx = lines.findIndex((l) => l.includes("Projects"));
+  expect(projectsIdx).toBeGreaterThan(-1);
+  expect(lines[projectsIdx]).toContain("% of usage");
+  expect(lines[projectsIdx + 1]).toContain("career-ops");
+  // Verify bullet-list format for cost category
+  expect(out).toContain("  - Large context:");
+});
 ```
 
 ---
@@ -1071,19 +1071,19 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"defaults insights without category to cost patterns"`:
 
 ```typescript
-  it("defaults insights without category to cost patterns", () => {
-    const state = mkState();
-    state.insights = [{ label: "No category", cost: 1, detail: "test" }];
-    const c = new UsageDashboardComponent(state, () => undefined, {
-      theme: noTheme,
-    });
-    // Switch to Insights tab
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const out = c.render(100).join("\n");
-    expect(out).toContain("Cost patterns");
-    expect(out).toContain("  - No category:");
+it("defaults insights without category to cost patterns", () => {
+  const state = mkState();
+  state.insights = [{ label: "No category", cost: 1, detail: "test" }];
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
   });
+  // Switch to Insights tab
+  c.handleInput("\t");
+  c.handleInput("\t");
+  const out = c.render(100).join("\n");
+  expect(out).toContain("Cost patterns");
+  expect(out).toContain("  - No category:");
+});
 ```
 
 ---
@@ -1099,40 +1099,39 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"wraps section titles, borders, and dimmed helpers with ANSI escape codes"`:
 
 ```typescript
-  it("renders frame borders and tab bar with themed styling", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-    const lines = c.render(140);
-    const out = lines.join("\n");
-
-    // Frame uses ┏ and ┛ (from overlay-render frame glyphs)
-    expect(out).toContain("\u250F"); // ┏
-    expect(out).toContain("\u251B"); // ┛
-
-    // Tab bar active pill uses inverse+bold for Usage Statistics
-    expect(
-      theme.calls.some(
-        (c) => c.method === "bold" && c.text.includes("Usage Statistics"),
-      ),
-    ).toBe(true);
-    expect(
-      theme.calls.some(
-        (c) => c.method === "inverse" && c.text.includes("Usage Statistics"),
-      ),
-    ).toBe(true);
-
-    // Footer should be dimmed with per-tab content
-    expect(out).toContain("[Tab/Shift-Tab] Switch tab");
-    expect(
-      theme.calls.some(
-        (c) =>
-          c.method === "dim" &&
-          c.text.includes("[Tab/Shift-Tab] Switch tab"),
-      ),
-    ).toBe(true);
+it("renders frame borders and tab bar with themed styling", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+  const lines = c.render(140);
+  const out = lines.join("\n");
+
+  // Frame uses ┏ and ┛ (from overlay-render frame glyphs)
+  expect(out).toContain("\u250F"); // ┏
+  expect(out).toContain("\u251B"); // ┛
+
+  // Tab bar active pill uses inverse+bold for Usage Statistics
+  expect(
+    theme.calls.some(
+      (c) => c.method === "bold" && c.text.includes("Usage Statistics"),
+    ),
+  ).toBe(true);
+  expect(
+    theme.calls.some(
+      (c) => c.method === "inverse" && c.text.includes("Usage Statistics"),
+    ),
+  ).toBe(true);
+
+  // Footer should be dimmed with per-tab content
+  expect(out).toContain("[Tab/Shift-Tab] Switch tab");
+  expect(
+    theme.calls.some(
+      (c) =>
+        c.method === "dim" && c.text.includes("[Tab/Shift-Tab] Switch tab"),
+    ),
+  ).toBe(true);
+});
 ```
 
 ---
@@ -1142,21 +1141,21 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"dims the inactive provider tabs in Current Usage"`:
 
 ```typescript
-  it("renders inactive main tabs with bg styling", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-    c.render(140);
-
-    // Inactive tabs use bg("selectedBg", fg("accent", label))
-    const bgCalls = theme.calls
-      .filter((c) => c.method === "bg")
-      .map((c) => c.text);
-    // Current Usage and Insights should have bg calls (they're inactive)
-    expect(bgCalls.some((t) => t.includes("Current Usage"))).toBe(true);
-    expect(bgCalls.some((t) => t.includes("Insights"))).toBe(true);
+it("renders inactive main tabs with bg styling", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+  c.render(140);
+
+  // Inactive tabs use bg("selectedBg", fg("accent", label))
+  const bgCalls = theme.calls
+    .filter((c) => c.method === "bg")
+    .map((c) => c.text);
+  // Current Usage and Insights should have bg calls (they're inactive)
+  expect(bgCalls.some((t) => t.includes("Current Usage"))).toBe(true);
+  expect(bgCalls.some((t) => t.includes("Insights"))).toBe(true);
+});
 ```
 
 ---
@@ -1166,33 +1165,33 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"highlights the selected disclosure arrow + provider label and dims the rest"`:
 
 ```typescript
-  it("highlights the selected disclosure arrow and dims the rest", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-    const lines = c.render(140);
-
-    const providerLine = lines.find(
-      (l) => l.includes("openai-codex") && l.includes("\u25B8"),
-    );
-    expect(providerLine).toBeDefined();
-
-    const plain = stripAnsi(providerLine ?? "");
-    // Line is inside a frame (\u2503...\u2503); verify no stray > cursor in content
-    const content = plain.replace(/^\u2503\s*/, "");
-    expect(content.startsWith(">")).toBe(false);
-    expect(plain).toContain("\u25B8"); // ▸
-    expect(plain).toContain("openai-codex");
-    expect(
-      theme.calls.some(
-        (c) =>
-          c.method === "fg" &&
-          c.color === "accent" &&
-          c.text.includes("openai-codex"),
-      ),
-    ).toBe(true);
+it("highlights the selected disclosure arrow and dims the rest", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+  const lines = c.render(140);
+
+  const providerLine = lines.find(
+    (l) => l.includes("openai-codex") && l.includes("\u25B8"),
+  );
+  expect(providerLine).toBeDefined();
+
+  const plain = stripAnsi(providerLine ?? "");
+  // Line is inside a frame (\u2503...\u2503); verify no stray > cursor in content
+  const content = plain.replace(/^\u2503\s*/, "");
+  expect(content.startsWith(">")).toBe(false);
+  expect(plain).toContain("\u25B8"); // ▸
+  expect(plain).toContain("openai-codex");
+  expect(
+    theme.calls.some(
+      (c) =>
+        c.method === "fg" &&
+        c.color === "accent" &&
+        c.text.includes("openai-codex"),
+    ),
+  ).toBe(true);
+});
 ```
 
 ---
@@ -1202,43 +1201,47 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"aligns themed quota bars by visible width"`:
 
 ```typescript
-  it("aligns themed quota bars by visible width", () => {
-    const theme = makeAnsiTheme();
-    const state = mkState();
-    setWindows(state, [
-      {
-        key: "5h",
-        label: "5h",
-        usedPercent: 50,
-        resetAt: Date.now() + 3600000,
-      },
-      {
-        key: "weekly",
-        label: "Weekly",
-        usedPercent: 10,
-        resetAt: Date.now() + 86400000 * 7,
-      },
-    ]);
+it("aligns themed quota bars by visible width", () => {
+  const theme = makeAnsiTheme();
+  const state = mkState();
+  setWindows(state, [
+    {
+      key: "5h",
+      label: "5h",
+      usedPercent: 50,
+      resetAt: Date.now() + 3600000,
+    },
+    {
+      key: "weekly",
+      label: "Weekly",
+      usedPercent: 10,
+      resetAt: Date.now() + 86400000 * 7,
+    },
+  ]);
 
-    const c = new UsageDashboardComponent(state, () => undefined, { theme });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    const lines = c.render(200);
-    const line5h = lines.find(
-      (l) => stripAnsi(l).includes("5h") && l.includes("[") && l.includes("% left"),
-    );
-    const lineWeekly = lines.find(
-      (l) => stripAnsi(l).includes("Weekly") && l.includes("[") && l.includes("% left"),
-    );
+  const c = new UsageDashboardComponent(state, () => undefined, { theme });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  const lines = c.render(200);
+  const line5h = lines.find(
+    (l) =>
+      stripAnsi(l).includes("5h") && l.includes("[") && l.includes("% left"),
+  );
+  const lineWeekly = lines.find(
+    (l) =>
+      stripAnsi(l).includes("Weekly") &&
+      l.includes("[") &&
+      l.includes("% left"),
+  );
 
-    expect(line5h).toBeDefined();
-    expect(lineWeekly).toBeDefined();
+  expect(line5h).toBeDefined();
+  expect(lineWeekly).toBeDefined();
 
-    // The opening bracket (after padding) aligns vertically; frame adds
-    // uniform padding so relative alignment is preserved.
-    const bracketIndex = (line: string) => stripAnsi(line).indexOf("[");
-    expect(bracketIndex(line5h ?? "")).toBe(bracketIndex(lineWeekly ?? ""));
-  });
+  // The opening bracket (after padding) aligns vertically; frame adds
+  // uniform padding so relative alignment is preserved.
+  const bracketIndex = (line: string) => stripAnsi(line).indexOf("[");
+  expect(bracketIndex(line5h ?? "")).toBe(bracketIndex(lineWeekly ?? ""));
+});
 ```
 
 ---
@@ -1248,29 +1251,28 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"highlights the quota remaining-bar fill and percentage"`:
 
 ```typescript
-  it("highlights the quota remaining-bar fill and percentage", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-    // Switch to Current Usage tab
-    c.handleInput("\t");
-    c.render(140);
-
-    // The fill glyphs should be wrapped in accent styling.
-    const filledAccent = theme.calls.find(
-      (c) =>
-        c.method === "fg" && c.color === "accent" && c.text.includes("\u2588"),
-    );
-    expect(filledAccent).toBeDefined();
-
-    // The percentage text should be accent-wrapped.
-    const percentAccent = theme.calls.find(
-      (c) =>
-        c.method === "fg" && c.color === "accent" && c.text === "57% left",
-    );
-    expect(percentAccent).toBeDefined();
+it("highlights the quota remaining-bar fill and percentage", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+  // Switch to Current Usage tab
+  c.handleInput("\t");
+  c.render(140);
+
+  // The fill glyphs should be wrapped in accent styling.
+  const filledAccent = theme.calls.find(
+    (c) =>
+      c.method === "fg" && c.color === "accent" && c.text.includes("\u2588"),
+  );
+  expect(filledAccent).toBeDefined();
+
+  // The percentage text should be accent-wrapped.
+  const percentAccent = theme.calls.find(
+    (c) => c.method === "fg" && c.color === "accent" && c.text === "57% left",
+  );
+  expect(percentAccent).toBeDefined();
+});
 ```
 
 ---
@@ -1280,34 +1282,34 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"dims the formula legend, reset text, and ratio text"`:
 
 ```typescript
-  it("dims the formula legend on Statistics tab and reset/ratio on Current Usage tab", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-
-    // Statistics tab: legend segments should be dimmed
-    c.render(140);
-    const dimmed = theme.calls
-      .filter((c) => c.method === "dim")
-      .map((c) => c.text);
-    expect(dimmed).toContain("Tokens = Input + Output + CacheW");
-    expect(dimmed).toContain("CacheR = Cache Read");
-
-    // Switch to Current Usage tab: reset and ratio should be dimmed
-    c.handleInput("\t");
-    c.render(140);
-    const allDimmed = theme.calls
-      .filter((c) => c.method === "dim")
-      .map((c) => c.text);
-    expect(
-      allDimmed.some(
-        (text) =>
-          text.startsWith("(resets ") || text.includes("reset unavailable"),
-      ),
-    ).toBe(true);
-    expect(allDimmed).toContain("$4.29/$10.00");
+it("dims the formula legend on Statistics tab and reset/ratio on Current Usage tab", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+
+  // Statistics tab: legend segments should be dimmed
+  c.render(140);
+  const dimmed = theme.calls
+    .filter((c) => c.method === "dim")
+    .map((c) => c.text);
+  expect(dimmed).toContain("Tokens = Input + Output + CacheW");
+  expect(dimmed).toContain("CacheR = Cache Read");
+
+  // Switch to Current Usage tab: reset and ratio should be dimmed
+  c.handleInput("\t");
+  c.render(140);
+  const allDimmed = theme.calls
+    .filter((c) => c.method === "dim")
+    .map((c) => c.text);
+  expect(
+    allDimmed.some(
+      (text) =>
+        text.startsWith("(resets ") || text.includes("reset unavailable"),
+    ),
+  ).toBe(true);
+  expect(allDimmed).toContain("$4.29/$10.00");
+});
 ```
 
 ---
@@ -1317,36 +1319,36 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders the footer in [Shortcut] Action format with dimmed styling"`:
 
 ```typescript
-  it("renders context-aware footer per tab", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-
-    // Statistics tab footer
-    let out = c.render(160).join("\n");
-    let stripped = stripAnsi(out);
-    expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
-    expect(stripped).toContain("[Left/Right] Period");
-    expect(stripped).toContain("[Up/Down] Row");
-    expect(stripped).toContain("[Enter] Expand");
-    expect(stripped).toContain("[q/Esc] Close");
-
-    // Current Usage tab footer
-    c.handleInput("\t");
-    out = c.render(160).join("\n");
-    stripped = stripAnsi(out);
-    expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
-    expect(stripped).toContain("[Left/Right] Provider");
-    expect(stripped).not.toContain("[Up/Down] Row");
-
-    // Insights tab footer
-    c.handleInput("\t");
-    out = c.render(160).join("\n");
-    stripped = stripAnsi(out);
-    expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
-    expect(stripped).toContain("[Left/Right] Period");
-    expect(stripped).not.toContain("[Up/Down] Row");
+it("renders context-aware footer per tab", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+
+  // Statistics tab footer
+  let out = c.render(160).join("\n");
+  let stripped = stripAnsi(out);
+  expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
+  expect(stripped).toContain("[Left/Right] Period");
+  expect(stripped).toContain("[Up/Down] Row");
+  expect(stripped).toContain("[Enter] Expand");
+  expect(stripped).toContain("[q/Esc] Close");
+
+  // Current Usage tab footer
+  c.handleInput("\t");
+  out = c.render(160).join("\n");
+  stripped = stripAnsi(out);
+  expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
+  expect(stripped).toContain("[Left/Right] Provider");
+  expect(stripped).not.toContain("[Up/Down] Row");
+
+  // Insights tab footer
+  c.handleInput("\t");
+  out = c.render(160).join("\n");
+  stripped = stripAnsi(out);
+  expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
+  expect(stripped).toContain("[Left/Right] Period");
+  expect(stripped).not.toContain("[Up/Down] Row");
+});
 ```
 
 ---
@@ -1356,19 +1358,19 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"strips ANSI before applying final truncation so visible width is preserved"`:
 
 ```typescript
-  it("strips ANSI before applying final truncation so visible width is preserved", () => {
-    const theme = makeAnsiTheme();
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme,
-    });
-    // Render with a narrow width -- every visible line must not exceed it
-    // even when ANSI escapes are present. frame() handles truncation.
-    const lines = c.render(40);
-    for (const line of lines) {
-      const visible = stripAnsi(line).length;
-      expect(visible).toBeLessThanOrEqual(40);
-    }
+it("strips ANSI before applying final truncation so visible width is preserved", () => {
+  const theme = makeAnsiTheme();
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme,
   });
+  // Render with a narrow width -- every visible line must not exceed it
+  // even when ANSI escapes are present. frame() handles truncation.
+  const lines = c.render(40);
+  for (const line of lines) {
+    const visible = stripAnsi(line).length;
+    expect(visible).toBeLessThanOrEqual(40);
+  }
+});
 ```
 
 ---
@@ -1378,20 +1380,20 @@ Expected: No type errors. If references to removed methods or old constants rema
 - [ ] Replace `"renders at very narrow widths without breaking the table"`:
 
 ```typescript
-  it("renders at very narrow widths without breaking the frame", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
-      theme: noTheme,
-    });
-    const lines = c.render(30);
-    for (const line of lines) {
-      const visible = line.replace(ANSI_PATTERN, "").length;
-      expect(visible).toBeLessThanOrEqual(30);
-    }
-    // Frame borders should be present
-    const out = lines.join("\n");
-    expect(out).toContain("\u250F"); // ┏
-    expect(out).toContain("\u251B"); // ┛
+it("renders at very narrow widths without breaking the frame", () => {
+  const c = new UsageDashboardComponent(mkState(), () => undefined, {
+    theme: noTheme,
   });
+  const lines = c.render(30);
+  for (const line of lines) {
+    const visible = line.replace(ANSI_PATTERN, "").length;
+    expect(visible).toBeLessThanOrEqual(30);
+  }
+  // Frame borders should be present
+  const out = lines.join("\n");
+  expect(out).toContain("\u250F"); // ┏
+  expect(out).toContain("\u251B"); // ┛
+});
 ```
 
 ---
@@ -1413,7 +1415,6 @@ Expected: All tests pass.
 ### Step 39: Fix any remaining failures
 
 - [ ] If any tests fail, diagnose and fix. Common issues:
-
   - **Line-finding assertions:** Tests using `startsWith` or `indexOf` may need updating for frame-wrapped lines. Use `includes` instead.
   - **Width calculations:** Content width is now `frameContentWidth(w) = w - 6`, so table breakpoints may shift at boundary widths. Adjust render width or assertion if needed.
   - **Tab state:** Tests that render Current Usage content must call `c.handleInput("\t")` first. Tests that render Insights content must call `c.handleInput("\t")` twice.
