@@ -21,49 +21,83 @@ Then reload Pi:
 /reload
 ```
 
+## Quick Start
+
+Open the dashboard with cached data:
+
+```text
+/usage
+```
+
+Force a live refresh, rescan local history, and reopen:
+
+```text
+/usage:refresh
+```
+
 ## Commands
 
-- `/usage` opens the dashboard using cached live data when available. Use it for quick inspection.
-- `/usage:refresh` forces a live refresh, rescans local history, and then opens the dashboard.
+| Command           | Purpose                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `/usage`          | Open the dashboard. Uses cached live data when available. Quick inspection.              |
+| `/usage:refresh`  | Force a live refresh, rescan local session history, then open the dashboard.             |
 
-## What the dashboard shows
+## Dashboard Tabs
 
-### Usage statistics
+The dashboard renders as a tabbed overlay. Switch tabs with `Tab` / `Shift-Tab`.
 
-The top section aggregates local Pi session history for the selected period.
+### Usage Statistics (default)
 
-- switch between `Today`, `This Week`, `Last Week`, and `All Time`
-- expand provider rows to inspect model-level usage
-- compare sessions, messages, cost, total tokens, input, output, cache reads, and cache writes
-- keep a running total row for everything currently shown
+Aggregates local Pi session history for the selected period.
 
-### Current usage
+- Period selector: `Today`, `This Week`, `Last Week`, `All Time`.
+- Aggregated provider/model table with expandable rows.
+- Total row for everything currently shown.
+- Per-row counts for sessions, messages, cost, total tokens, input, output, cache reads, and cache writes.
 
-The lower section shows the supported providers. Configured providers can return live quota and balance data, while unconfigured ones may show `unavailable` or local fallback states.
+### Current Usage
 
-- switch between `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, and `OpenRouter`
-- view rolling-window quota bars like `5h` and weekly usage
-- see balance-style fields where the provider exposes them
-- get inline status for live, cached, stale, local, or unavailable data
+Shows supported live providers. Configured providers return live quota and balance data; unconfigured ones may show `unavailable` or a local fallback.
+
+- Provider selector: `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, `OpenRouter`.
+- Rolling-window quota bars (e.g. `5h`, weekly).
+- Balance-style fields where the provider exposes them.
+- Inline status: `live`, `cached`, `stale`, `local`, `unavailable`.
 
 ### Insights
 
-Press `v` to toggle insights for the selected period.
+Breakdowns for the selected period. Toggle visibility by switching to this tab.
 
-- review the most expensive projects in your local session history
-- see active skill and MCP server breakdowns when that data is present
-- keep long sections readable through grouped insight categories and capped lists with overflow summaries
+- Most expensive projects in your local session history.
+- Active skill breakdown when that data is present.
+- MCP server breakdown when that data is present.
+- Grouped insight categories with capped lists and overflow summaries so long sections stay readable.
 
-## How to use it
+The Insights period selector is independent of the Usage Statistics period.
 
-### Keyboard shortcuts
+## Keyboard Shortcuts
 
-- `[Tab/Shift-Tab]` switch provider tabs
-- `[Left/Right]` switch time period
-- `[Up/Down]` move through rows
-- `[Enter/Space]` expand or collapse provider rows
-- `[v]` toggle insights
-- `[q/Esc]` close the dashboard
+Global:
+
+- `[Tab]` next tab.
+- `[Shift-Tab]` previous tab.
+- `[q]` / `[Esc]` close the dashboard.
+
+Usage Statistics tab:
+
+- `[Left/Right]` switch period.
+- `[Up/Down]` move through rows.
+- `[Enter]` / `[Space]` expand or collapse the selected provider row.
+
+Current Usage tab:
+
+- `[Left/Right]` switch provider.
+
+Insights tab:
+
+- `[Left/Right]` switch period.
+
+The footer at the bottom of the dashboard shows the contextual shortcuts for the active tab.
 
 ## Configuration
 
@@ -72,10 +106,11 @@ Press `v` to toggle insights for the selected period.
 Create `$PI_CODING_AGENT_DIR/extensions/usage.json` to disable specific live providers.
 
 Default behavior:
-- if the file is missing, all providers stay enabled
-- if the file is `{}`, all providers stay enabled
-- if a provider is omitted, that provider stays enabled
-- if the JSON is malformed, `@pi-vault/pi-usage` ignores it and falls back to the default behavior
+
+- File missing: all providers stay enabled.
+- File is `{}`: all providers stay enabled.
+- Provider omitted: that provider stays enabled.
+- JSON malformed: `@pi-vault/pi-usage` ignores it and falls back to the default behavior.
 
 Default example:
 
@@ -110,7 +145,7 @@ Disable MiniMax only:
 
 ### Provider setup
 
-Offline history works without extra setup. Provider cards appear for every supported live provider unless you disable them in `usage.json`. Providers you configure can return live data; others may show `unavailable` or local fallback states.
+Offline history works without extra setup. Provider cards appear for every supported live provider unless you disable them in `usage.json`. Providers you configure can return live data; others may show `unavailable` or a local fallback state.
 
 #### OpenAI/Codex
 
