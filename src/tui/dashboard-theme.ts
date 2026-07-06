@@ -38,7 +38,6 @@ export interface DashboardTheme {
  */
 export type DashboardColor =
   | "accent"
-  | "border"
   | "borderAccent"
   | "borderMuted"
   | "selectedBg"

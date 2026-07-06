@@ -11,7 +11,6 @@ import type { DashboardTheme } from "./dashboard-theme.ts";
 // ── Layout constants ────────────────────────────────────────────────────
 
 const PADDING_X = 2;
-const PADDING_Y = 1;
 
 // ── Frame glyphs ────────────────────────────────────────────────────────
 
@@ -48,50 +47,30 @@ export function frameContentWidth(width: number): number {
  * Wrap content `lines` in a bordered frame box.
  *
  * Matches the pi-extension-manager's frame rendering:
- * - Top/bottom borders with optional title
- * - PADDING_Y blank rows above/below content
+ * - Top/bottom borders
+ * - Single blank row above/below content
  * - PADDING_X space columns on each side of content
- * - Overflow truncation with "↓ N more line(s)" when fixedInnerRows is set
  */
 export function frame(
   lines: string[],
   width: number,
   theme: DashboardTheme,
-  fixedInnerRows?: number,
-  title = "",
 ): string[] {
   const inner = Math.max(1, width - 2);
   const contentWidth = frameContentWidth(width);
   const border = (s: string) => theme.fg("borderAccent", s);
-
-  let body = lines;
-  if (fixedInnerRows !== undefined && body.length > fixedInnerRows) {
-    const hidden = body.length - fixedInnerRows + 1;
-    body = [
-      ...body.slice(0, Math.max(0, fixedInnerRows - 1)),
-      theme.fg("dim", `↓ ${hidden} more line(s)`),
-    ].slice(0, fixedInnerRows);
-  }
-
   const blank = `${border(FRAME.v)}${" ".repeat(inner)}${border(FRAME.v)}`;
 
-  const top = (): string => {
-    if (!title) {
-      return `${border(FRAME.tl)}${border(FRAME.h.repeat(inner))}${border(FRAME.tr)}`;
-    }
-    const titleText = ` ${truncateToWidth(title, Math.max(1, inner - 2), "…")} `;
-    const fill = Math.max(1, inner - visibleWidth(titleText));
-    return `${border(FRAME.tl)}${theme.fg("accent", titleText)}${border(FRAME.h.repeat(fill))}${border(FRAME.tr)}`;
-  };
-
-  const out = [top()];
-  for (let i = 0; i < PADDING_Y; i += 1) out.push(blank);
-  for (const line of body) {
+  const out = [
+    `${border(FRAME.tl)}${border(FRAME.h.repeat(inner))}${border(FRAME.tr)}`,
+    blank,
+  ];
+  for (const line of lines) {
     out.push(
       `${border(FRAME.v)}${" ".repeat(PADDING_X)}${pad(line, contentWidth)}${" ".repeat(PADDING_X)}${border(FRAME.v)}`,
     );
   }
-  for (let i = 0; i < PADDING_Y; i += 1) out.push(blank);
+  out.push(blank);
   out.push(
     `${border(FRAME.bl)}${border(FRAME.h.repeat(inner))}${border(FRAME.br)}`,
   );

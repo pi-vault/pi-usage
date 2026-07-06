@@ -62,22 +62,6 @@ describe("frame", () => {
     expect(lines.length).toBe(5); // 1 top + 1 pad + 1 content + 1 pad + 1 bottom
   });
 
-  it("truncates overflow with indicator when fixedInnerRows is set", () => {
-    const content = ["line1", "line2", "line3", "line4", "line5"];
-    const lines = frame(content, 30, noTheme, 3);
-    const joined = lines.join("\n");
-    expect(joined).toContain("line1");
-    expect(joined).toContain("line2");
-    expect(joined).toContain("more line(s)");
-    expect(joined).not.toContain("line5");
-  });
-
-  it("renders a title in the top border when provided", () => {
-    const lines = frame(["content"], 30, noTheme, undefined, "My Title");
-    expect(lines[0]).toContain("My Title");
-    expect(lines[0]).toContain("┏");
-  });
-
   it("pads content to frameContentWidth", () => {
     const lines = frame(["hi"], 20, noTheme);
     // Content line: ┃ + 2 pad + content padded to contentWidth + 2 pad + ┃
