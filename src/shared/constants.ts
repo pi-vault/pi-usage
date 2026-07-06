@@ -45,7 +45,6 @@ export const PERIOD_ORDER: UsageWindow[] = [
 ];
 
 export const UI_STRINGS = {
-  dashboardTitle: "Pi Usage Dashboard",
   dashboardFooters: {
     statistics: [
       "[Tab/Shift-Tab] Switch tab",
