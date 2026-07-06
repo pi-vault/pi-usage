@@ -20,7 +20,12 @@ Create `tests/overlay-render.test.ts` with the initial `pad` tests:
 
 ```typescript
 import { describe, expect, it } from "vitest";
-import { pad, frame, renderTabBar, frameContentWidth } from "../src/tui/overlay-render.ts";
+import {
+  pad,
+  frame,
+  renderTabBar,
+  frameContentWidth,
+} from "../src/tui/overlay-render.ts";
 import { noTheme } from "../src/tui/dashboard-theme.ts";
 
 describe("pad", () => {
