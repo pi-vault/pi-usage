@@ -7,8 +7,6 @@
 
 Track Pi usage across your sessions in one dashboard. `@pi-vault/pi-usage` combines offline history with live provider snapshots so you can review costs, tokens, session activity, current quotas, and usage insights without leaving Pi.
 
-![Pi usage dashboard showing the aggregated usage table for the "All Time" period, current usage quota bars for OpenAI/Codex, and the keyboard navigation hints at the bottom](docs/assets/dashboard-ui.png)
-
 ## Install
 
 ```bash
@@ -48,6 +46,8 @@ The dashboard renders as a tabbed overlay. Switch tabs with `Tab` / `Shift-Tab`.
 
 ### Usage Statistics (default)
 
+![Usage Statistics tab](docs/assets/usage-statistics.png)
+
 Aggregates local Pi session history for the selected period.
 
 - Period selector: `Today`, `This Week`, `Last Week`, `All Time`.
@@ -57,6 +57,8 @@ Aggregates local Pi session history for the selected period.
 
 ### Current Usage
 
+![Current Usage tab](docs/assets/current-usage.png)
+
 Shows supported live providers. Configured providers return live quota and balance data; unconfigured ones may show `unavailable` or a local fallback.
 
 - Provider selector: `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, `OpenRouter`.
@@ -65,6 +67,8 @@ Shows supported live providers. Configured providers return live quota and balan
 - Inline status: `live`, `cached`, `stale`, `local`, `unavailable`.
 
 ### Insights
+
+![Insights tab](docs/assets/insights.png)
 
 Breakdowns for the selected period. Toggle visibility by switching to this tab.
 
