@@ -109,8 +109,7 @@ export function renderTabBar(
   const widths = tabs.map((tab) => visibleWidth(tab.label) + 2); // " label "
 
   const sliceWidth = (s: number, e: number): number => {
-    let total = 0;
-    for (let i = s; i < e; i += 1) total += widths[i]!;
+    let total = widths.slice(s, e).reduce((sum, width) => sum + width, 0);
     total += Math.max(0, e - s - 1); // single-space gaps
     total += s > 0 ? 2 : 0; // "‹ "
     total += e < tabs.length ? 2 : 0; // " ›"
