@@ -19,8 +19,10 @@ describe("fetchWithTimeout", () => {
   it("aborts after timeout expires", async () => {
     const deps = createDefaultDeps();
     deps.fetch = vi.fn(async (_url, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("fetch signal missing");
       await new Promise((_, reject) => {
-        (init?.signal as AbortSignal).addEventListener("abort", () =>
+        signal.addEventListener("abort", () =>
           reject(new DOMException("aborted", "AbortError")),
         );
       });
@@ -28,19 +30,21 @@ describe("fetchWithTimeout", () => {
     });
     await expect(
       fetchWithTimeout(deps, "https://example.com/slow", {}, 10),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("respects external signal", async () => {
     const deps = createDefaultDeps();
     const external = AbortSignal.abort();
     deps.fetch = vi.fn(async (_url, init) => {
-      (init?.signal as AbortSignal).throwIfAborted();
+      const signal = init?.signal;
+      if (!signal) throw new Error("fetch signal missing");
+      signal.throwIfAborted();
       return new Response();
     });
     await expect(
       fetchWithTimeout(deps, "https://example.com", { signal: external }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("cleans up timer on success", async () => {
