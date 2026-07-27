@@ -1,42 +1,56 @@
-# Phase 4: Compact Insights Categories Implementation Plan
+# Compact Insights categories Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Parent plan:** `docs/superpowers/plans/2026-07-27-stepfun-credits-compact-insights-refactor.md`
+**Goal:** Replace the unsupported Insights period selector with all-time category navigation that stays visible inside Pi's overlay at the minimum supported terminal size.
 
-**Goal:** Replace the unsupported Insights period selector with all-time category navigation that remains fully visible in Pi's overlay at the minimum supported terminal size.
+**Architecture:** Keep `UsageDashboardComponent`, its frame, and its existing tab renderer. Derive populated Insight categories in fixed order, retain one selected category ID as component state, and render only that category's existing capped items. Statistics keeps its separate period state.
 
-**Architecture:** Keep the existing dashboard component, frame, and tab renderer. Derive populated Insight categories in fixed order, retain one category ID as UI state, and render only that category's existing capped items.
+**Tech Stack:** TypeScript 6, Vitest 4, pnpm, `@earendil-works/pi-coding-agent` 0.82.1, and `@earendil-works/pi-tui` 0.82.1. The installed packages remain unchanged; Pi 0.82.0 source is used as the overlay sizing reference.
 
-**Tech Stack:** TypeScript 6, Vitest 4, Pi TUI 0.82.0.
+**Design reference:** `docs/superpowers/specs/2026-07-27-compact-insights-design.md`
 
-**Phase dependency:** Phase 3 is committed and `pnpm check` passes.
+**Phase dependency:** Phase 3 is committed. The baseline worktree is clean and `pnpm check` passes 258 tests.
 
-**Usable result:** Insights truthfully displays all-time data, Left/Right switches populated categories, and the footer and bottom frame remain visible at 40×24 and larger terminals.
+**Usable result:** Insights shows only populated all-time categories, Left/Right cycles them independently of Statistics, and the footer and bottom frame remain visible at 40×24.
 
-**Out of scope:** Offline insight calculations, category item caps, provider behavior, scrolling, new TUI components, and unrelated dashboard refactors.
-
-## Fixed layout contract
-
-- Category order: Projects, Skills, MCP servers, Cost patterns.
-- Categories with no items are omitted.
-- Missing `category` values retain current behavior and belong to Cost patterns.
-- The first populated category is the effective default.
-- If state updates remove the selected category, selection permanently falls back to the first populated category.
-- Insights are all-time; Today, This Week, Last Week, and All Time controls do not render in this tab.
-- At a 40×24 terminal, Pi computes overlay width `floor(40 × 0.92) = 36` and maximum height `floor(24 × 0.85) = 20`. The component must render no more than 20 lines at width 36.
-- At widths 73 and 100, the component must render no more than 17 lines.
+**Out of scope:** Offline insight calculations, category item caps, provider behavior, scrolling, new TUI components, dependency changes, overlay option changes, and unrelated dashboard refactors.
 
 ---
 
-### Task 1: Specify category selection behavior
+## File map
+
+- Modify `tests/dashboard.test.ts` for category selection, rendering, state-update fallback, and height-budget coverage.
+- Modify `tests/constants.test.ts` for the new Insights footer string.
+- Modify `src/tui/dashboard.ts` for fixed category descriptors, selected category state, populated-category derivation, rendering, and input handling.
+- Modify `src/shared/constants.ts` for the Insights footer shortcut.
+- Do not modify Pi dependencies, offline insight generation, provider code, public types, or overlay configuration.
+
+## Fixed behavior contract
+
+- Category order is Projects, Skills, MCP servers, Cost patterns.
+- Categories with no items are omitted.
+- Missing `category` values map to Cost patterns.
+- Unknown category strings remain excluded, matching the current renderer.
+- The first populated category is the default.
+- Left and Right cycle populated categories with wraparound.
+- If the selected category disappears, selection is stored as the first populated category. If the old category returns later, the fallback remains selected.
+- Statistics period state is unaffected by Insights navigation.
+- Insights does not render Today, This Week, Last Week, or All Time controls.
+- At component widths 36, 73, and 100, rendered output must contain at most 20, 17, and 17 lines respectively.
+- Pi 0.82.0's reference implementation floors percentage sizes and slices overlay output after `maxHeight`; the current installed 0.82.1 packages remain in use.
+
+---
+
+### Task 1: Add failing category behavior tests
 
 **Files:**
+
 - Modify: `tests/dashboard.test.ts`
 
-- [ ] **Step 1: Add a shared tab-switch helper**
+- [ ] **Step 1: Add the shared Insights tab helper**
 
-Add near the dashboard tests:
+Add this function after `mkState()` and before the first dashboard test:
 
 ```ts
 function switchToInsights(component: UsageDashboardComponent): void {
@@ -45,11 +59,11 @@ function switchToInsights(component: UsageDashboardComponent): void {
 }
 ```
 
-Use it in new and existing tests that switch from Statistics to Insights.
+Use this helper in every test that switches from the default Statistics tab to Insights.
 
-- [ ] **Step 2: Replace the independent-period test**
+- [ ] **Step 2: Replace the first stale grouped-category test**
 
-Delete `has independent period selector for Insights tab`. Add:
+Replace the test named `renders Insights tab with insights grouped by category` with:
 
 ```ts
 it("shows only populated Insight categories and defaults to the first", () => {
@@ -77,7 +91,9 @@ it("shows only populated Insight categories and defaults to the first", () => {
 });
 ```
 
-- [ ] **Step 3: Add category cycling without Statistics-state coupling**
+- [ ] **Step 3: Replace the obsolete independent-period test**
+
+Delete the test named `has independent period selector for Insights tab` and add:
 
 ```ts
 it("cycles Insight categories without changing the Statistics period", () => {
@@ -91,6 +107,8 @@ it("cycles Insight categories without changing the Statistics period", () => {
   });
 
   c.handleInput("\u001b[D");
+  expect(c.render(120).join("\n")).toContain("[Last Week]");
+
   switchToInsights(c);
   c.handleInput("\u001b[C");
   let out = c.render(100).join("\n");
@@ -104,10 +122,14 @@ it("cycles Insight categories without changing the Statistics period", () => {
 });
 ```
 
-- [ ] **Step 4: Add durable fallback after a state update**
+This proves one Left in Statistics remains active after category navigation. The category test starts with Projects selected and Right moves to Cost patterns.
+
+- [ ] **Step 4: Add durable fallback coverage**
+
+Add:
 
 ```ts
-it("falls back when the selected Insight category disappears", () => {
+it("falls back permanently when the selected Insight category disappears", () => {
   const state = mkState();
   state.insights = [
     { category: "project", label: "pi-usage", cost: 9, detail: "90.0%" },
@@ -135,25 +157,84 @@ it("falls back when the selected Insight category disappears", () => {
 });
 ```
 
-The final assertion proves fallback updates the selected ID rather than temporarily substituting rendered content.
+The final assertion proves the component stores the fallback ID instead of temporarily substituting the first category during rendering.
 
-- [ ] **Step 5: Run the dashboard tests and confirm failure**
+- [ ] **Step 5: Rewrite the duplicate grouped-rendering test**
+
+Replace the later test named `renders insights grouped by category in Insights tab` with:
+
+```ts
+it("renders the selected Insight category with its existing format", () => {
+  const state = mkState();
+  state.insights = [
+    { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
+    { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
+    {
+      category: "cost",
+      label: "Large context",
+      cost: 5,
+      detail: "50.0% over 150k context",
+    },
+  ];
+  const c = new UsageDashboardComponent(state, () => undefined, {
+    theme: noTheme,
+  });
+  switchToInsights(c);
+
+  let lines = c.render(100);
+  let out = lines.join("\n");
+  expect(out).toContain("[Projects]");
+  expect(out).toContain("Cost patterns");
+  expect(out).toContain("career-ops");
+  expect(out).toContain("90.0%");
+  expect(out).not.toContain("Large context");
+
+  const projectsIdx = lines.findIndex((line) => line.includes("% of usage"));
+  expect(projectsIdx).toBeGreaterThan(-1);
+  expect(lines[projectsIdx + 1]).toContain("career-ops");
+
+  c.handleInput("\u001b[C");
+  lines = c.render(100);
+  out = lines.join("\n");
+  expect(out).toContain("[Cost patterns]");
+  expect(out).toContain("Large context");
+  expect(out).toContain("  - Large context:");
+  expect(out).not.toContain("career-ops");
+});
+```
+
+- [ ] **Step 6: Update existing missing-category test to use the helper**
+
+In `defaults insights without category to cost patterns`, replace the two direct Tab calls with:
+
+```ts
+switchToInsights(c);
+```
+
+Keep its assertions for `Cost patterns` and `No category` unchanged.
+
+- [ ] **Step 7: Run the dashboard tests and confirm the expected failure**
+
+Run:
 
 ```sh
 pnpm test -- tests/dashboard.test.ts
 ```
 
-Expected: FAIL because Insights still renders periods and all categories simultaneously.
+Expected: FAIL because the current implementation renders period tabs, renders every category at once, and stores an Insights period index rather than a category ID. The existing test suite must not be treated as passing until the stale assertions are replaced.
 
 ---
 
-### Task 2: Specify the Pi overlay height budget and footer
+### Task 2: Add the height-budget and footer tests
 
 **Files:**
+
 - Modify: `tests/dashboard.test.ts`
 - Modify: `tests/constants.test.ts`
 
 - [ ] **Step 1: Add the maximum-category line-budget test**
+
+Add to the dashboard render tests:
 
 ```ts
 it("keeps a maximum Insight category inside the supported overlay height", () => {
@@ -180,17 +261,26 @@ it("keeps a maximum Insight category inside the supported overlay height", () =>
 });
 ```
 
-- [ ] **Step 2: Change dashboard footer expectations**
+- [ ] **Step 2: Update the per-tab footer assertion**
 
-In `renders context-aware footer per tab`, replace the Insights period assertion with:
+In `renders context-aware footer per tab`, replace:
+
+```ts
+expect(stripped).toContain("[Left/Right] Period");
+```
+
+in the Insights section with:
 
 ```ts
 expect(stripped).toContain("[Left/Right] Category");
+expect(stripped).not.toContain("[Left/Right] Period");
 ```
 
-- [ ] **Step 3: Change the constant test**
+Do not change the Statistics or Current Usage footer assertions.
 
-In `tests/constants.test.ts`, expect:
+- [ ] **Step 3: Update the constant expectation**
+
+In `tests/constants.test.ts`, replace the Insights expected string with:
 
 ```ts
 expect(UI_STRINGS.dashboardFooters.insights).toBe(
@@ -198,24 +288,27 @@ expect(UI_STRINGS.dashboardFooters.insights).toBe(
 );
 ```
 
-- [ ] **Step 4: Run focused tests and confirm failure**
+- [ ] **Step 4: Run the focused tests and confirm the expected failure**
+
+Run:
 
 ```sh
 pnpm test -- tests/dashboard.test.ts tests/constants.test.ts
 ```
 
-Expected: FAIL because the current Insights view exceeds the line budget and still advertises Period navigation.
+Expected: FAIL because the implementation still advertises Period navigation and renders the old multi-category layout.
 
 ---
 
-### Task 3: Implement available category state and rendering
+### Task 3: Implement populated category state and rendering
 
 **Files:**
+
 - Modify: `src/tui/dashboard.ts`
 
-- [ ] **Step 1: Define category order and types**
+- [ ] **Step 1: Add the fixed category descriptors**
 
-Add below `DASHBOARD_TABS`:
+Immediately below `DASHBOARD_TABS`, add:
 
 ```ts
 const INSIGHT_CATEGORIES = [
@@ -234,7 +327,7 @@ type AvailableInsightCategory = {
 };
 ```
 
-- [ ] **Step 2: Replace the unused period state**
+- [ ] **Step 2: Replace the unused Insights period state**
 
 Replace:
 
@@ -248,11 +341,11 @@ with:
 private insightsCategory: InsightCategoryId = "project";
 ```
 
-Do not change `periodIndex`; Statistics still uses it.
+Leave `periodIndex` and `DEFAULT_PERIOD_INDEX` unchanged because Statistics still uses them.
 
-- [ ] **Step 3: Derive populated categories and durable selection**
+- [ ] **Step 3: Add populated-category derivation and durable selection**
 
-Add:
+Add these methods to `UsageDashboardComponent` before the Insights renderer:
 
 ```ts
 private availableInsightCategories(): AvailableInsightCategory[] {
@@ -277,9 +370,11 @@ private activeInsightCategory(
 }
 ```
 
-- [ ] **Step 4: Replace all-category rendering with one complete renderer**
+This derives from current state on every call and updates the stored selection when the previous category disappears.
 
-Replace `renderInsightsByCategory` with:
+- [ ] **Step 4: Replace the all-category renderer**
+
+Delete `renderInsightsByCategory` and add:
 
 ```ts
 private renderInsightCategory(category: AvailableInsightCategory): string[] {
@@ -315,17 +410,14 @@ private renderInsightCategory(category: AvailableInsightCategory): string[] {
 }
 ```
 
-This preserves the current formatting and item caps; it only removes the outer category loop and leading blank lines.
+This keeps the existing project, skill, MCP, and cost formatting while removing the outer category loop and its extra blank row.
 
-- [ ] **Step 5: Replace `renderInsightsTab`**
+- [ ] **Step 5: Replace the Insights tab renderer**
+
+Replace `renderInsightsTab` with:
 
 ```ts
 private renderInsightsTab(w: number, lines: string[]): void {
-  if (this.state.insights.length === 0) {
-    lines.push(this.theme.dim("No insights yet."));
-    return;
-  }
-
   const categories = this.availableInsightCategories();
   const active = this.activeInsightCategory(categories);
   if (!active) {
@@ -345,9 +437,11 @@ private renderInsightsTab(w: number, lines: string[]): void {
 }
 ```
 
-Delete the stale period-filter comment.
+The `active` check covers both an empty insights array and an array containing only unrecognized category strings. Do not retain the old period-filter comment.
 
-- [ ] **Step 6: Replace period input with category input**
+- [ ] **Step 6: Replace Insights period input with category input**
+
+Replace `handleInsightsInput` with:
 
 ```ts
 private handleInsightsInput(data: string): void {
@@ -369,16 +463,21 @@ private handleInsightsInput(data: string): void {
 }
 ```
 
+If no recognized categories exist, `active` is undefined and arrow input does nothing.
+
 ---
 
-### Task 4: Update footer and verify the compact component
+### Task 4: Update the Insights footer and verify the implementation
 
 **Files:**
+
 - Modify: `src/shared/constants.ts`
 - Test: `tests/dashboard.test.ts`
 - Test: `tests/constants.test.ts`
 
 - [ ] **Step 1: Change the Insights footer constant**
+
+Replace the `insights` entry in `UI_STRINGS.dashboardFooters` with:
 
 ```ts
 insights: [
@@ -390,47 +489,92 @@ insights: [
 
 - [ ] **Step 2: Run focused tests and typecheck**
 
+Run:
+
 ```sh
 pnpm test -- tests/dashboard.test.ts tests/constants.test.ts
 pnpm typecheck
 ```
 
-Expected: PASS. Width 36 renders at most 20 lines; widths 73 and 100 render at most 17 lines.
+Expected: both commands pass. The line-budget test must report no failure at widths 36, 73, or 100.
 
-- [ ] **Step 3: Commit the atomic UI change**
+- [ ] **Step 3: Run the full project check**
+
+Run:
+
+```sh
+pnpm check
+```
+
+Expected: Biome lint, TypeScript typecheck, and all Vitest tests pass.
+
+- [ ] **Step 4: Inspect the implementation diff**
+
+Run:
+
+```sh
+git diff --check
+git diff -- src/tui/dashboard.ts src/shared/constants.ts tests/dashboard.test.ts tests/constants.test.ts
+```
+
+Expected: only the four planned files are changed, with no whitespace errors, no dependency changes, no provider changes, and no stale `insightsPeriodIndex`, `renderInsightsByCategory`, or Insights `Period` footer references.
+
+- [ ] **Step 5: Commit the atomic UI change**
+
+Run:
 
 ```sh
 git add src/tui/dashboard.ts src/shared/constants.ts tests/dashboard.test.ts tests/constants.test.ts
 git commit -m "fix: keep Insights within the dashboard height"
 ```
 
+Expected: one commit contains the compact Insights behavior and its tests.
+
 ---
 
-### Phase verification
+## Phase verification
 
-- [ ] Run:
+- [ ] **Step 1: Verify the 40×24 overlay in tmux**
 
-```sh
-pnpm check
-```
-
-Expected: PASS.
-
-- [ ] Verify at the minimum supported terminal size:
+Run:
 
 ```sh
-tmux new-session -d -s pi-usage-40 -x 40 -y 24
-tmux send-keys -t pi-usage-40 "cd $(pwd) && pi -e ." Enter
+session="pi-usage-40"
+tmux new-session -d -s "$session" -x 40 -y 24
+tmux send-keys -t "$session" "cd $(pwd) && pi -e ." Enter
 sleep 3
-tmux send-keys -t pi-usage-40 "/usage" Enter
+tmux send-keys -t "$session" "/usage" Enter
 sleep 2
-tmux capture-pane -t pi-usage-40 -p
-tmux kill-session -t pi-usage-40
+tmux send-keys -t "$session" Tab Tab
+sleep 1
+tmux capture-pane -t "$session" -p
+tmux kill-session -t "$session"
 ```
 
-Expected: category tabs, selected rows, contextual footer, and bottom frame are visible; Pi has not sliced off the end of the component.
+Expected: the capture shows Insights selected, populated category tabs, one selected category's rows, the Category footer, and the bottom frame. The footer and bottom border must not be sliced off.
 
-- [ ] Verify the phase diff:
+- [ ] **Step 2: Verify the normal 80×24 overlay**
+
+Run:
+
+```sh
+session="pi-usage-80"
+tmux new-session -d -s "$session" -x 80 -y 24
+tmux send-keys -t "$session" "cd $(pwd) && pi -e ." Enter
+sleep 3
+tmux send-keys -t "$session" "/usage" Enter
+sleep 2
+tmux send-keys -t "$session" Tab Tab
+sleep 1
+tmux capture-pane -t "$session" -p
+tmux kill-session -t "$session"
+```
+
+Expected: the available category tabs fit, one category renders, and the footer and bottom frame remain visible.
+
+- [ ] **Step 3: Verify final repository state**
+
+Run:
 
 ```sh
 git diff --check
@@ -440,4 +584,4 @@ git log -1 --oneline
 
 Expected: no whitespace errors, no uncommitted Phase 4 files, and the latest commit is `fix: keep Insights within the dashboard height`.
 
-**Stop here.** The compact all-time Insights UI is usable independently. Phase 5 documents both completed features and performs release-level verification.
+Stop here. Documentation and screenshot updates belong to Phase 5.
