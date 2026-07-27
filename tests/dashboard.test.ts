@@ -264,6 +264,11 @@ function mkState(): UsageCoreState {
   };
 }
 
+function switchToInsights(component: UsageDashboardComponent): void {
+  component.handleInput("\t");
+  component.handleInput("\t");
+}
+
 function setWindows(state: UsageCoreState, windows: LiveUsageWindow[]) {
   const cc = state.providers.find((p) => p.providerId === "command-code");
   if (!cc) throw new Error("command-code provider not found in test state");
@@ -352,64 +357,111 @@ describe("dashboard render", () => {
     expect(out).not.toContain("[All Time]");
   });
 
-  it("renders Insights tab with insights grouped by category", () => {
+  it("shows only populated Insight categories and defaults to the first", () => {
     const state = mkState();
     state.insights = [
-      { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
-      { category: "project", label: "dotfiles", cost: 1, detail: "10.0%" },
-      {
-        category: "cost",
-        label: "Large context",
-        cost: 5,
-        detail: "50.0% over 150k context",
-      },
+      { category: "project", label: "pi-usage", cost: 9, detail: "90.0%" },
+      { category: "cost", label: "Large context", cost: 1, detail: "10.0%" },
     ];
     const c = new UsageDashboardComponent(state, () => undefined, {
       theme: noTheme,
     });
-    // Switch to Insights tab (Tab twice)
-    c.handleInput("\t");
-    c.handleInput("\t");
+    switchToInsights(c);
+
     const out = c.render(100).join("\n");
-
-    expect(out).toContain("Projects");
-    expect(out).toContain("career-ops");
-    expect(out).toContain("90.0%");
+    expect(out).toContain("[Projects]");
     expect(out).toContain("Cost patterns");
-    expect(out).toContain("Large context");
-
-    // Should have its own period selector
-    expect(out).toContain("[All Time]");
-
-    // Usage Statistics content should NOT be visible
-    expect(out).not.toContain("Provider / Model");
+    expect(out).not.toContain("Skills");
+    expect(out).not.toContain("MCP servers");
+    expect(out).toContain("pi-usage");
+    expect(out).not.toContain("Large context");
+    expect(out).not.toContain("Today");
+    expect(out).not.toContain("This Week");
+    expect(out).not.toContain("Last Week");
+    expect(out).not.toContain("All Time");
   });
 
-  it("has independent period selector for Insights tab", () => {
-    const c = new UsageDashboardComponent(mkState(), () => undefined, {
+  it("cycles Insight categories without changing the Statistics period", () => {
+    const state = mkState();
+    state.insights = [
+      { category: "project", label: "pi-usage", cost: 9, detail: "90.0%" },
+      { category: "cost", label: "Large context", cost: 1, detail: "10.0%" },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
       theme: noTheme,
     });
 
-    // Change Statistics tab period to Today
-    c.handleInput("\u001b[D"); // Left (All Time → Last Week)
-    c.handleInput("\u001b[D"); // Left (Last Week → This Week)
-    c.handleInput("\u001b[D"); // Left (This Week → Today)
-    expect(c.render(120).join("\n")).toContain("[Today]");
-
-    // Switch to Insights tab
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const insightsOut = c.render(120).join("\n");
-    // Insights should still be on All Time (independent period)
-    expect(insightsOut).toContain("[All Time]");
-
-    // Change Insights period
-    c.handleInput("\u001b[D"); // Left
+    c.handleInput("\u001b[D");
     expect(c.render(120).join("\n")).toContain("[Last Week]");
 
-    // Switch back to Statistics tab and verify its period is still Today
-    c.handleInput("\t"); // Insights → Statistics (wraps)
-    expect(c.render(120).join("\n")).toContain("[Today]");
+    switchToInsights(c);
+    c.handleInput("\u001b[C");
+    let out = c.render(100).join("\n");
+    expect(out).toContain("[Cost patterns]");
+    expect(out).toContain("Large context");
+    expect(out).not.toContain("pi-usage");
+
+    c.handleInput("\u001b[D");
+    out = c.render(100).join("\n");
+    expect(out).toContain("[Projects]");
+
+    c.handleInput("\u001b[D");
+    out = c.render(100).join("\n");
+    expect(out).toContain("[Cost patterns]");
+
+    c.handleInput("\t");
+    out = c.render(100).join("\n");
+    expect(out).toContain("[Last Week]");
+  });
+
+  it("falls back permanently when the selected Insight category disappears", () => {
+    const state = mkState();
+    state.insights = [
+      { category: "project", label: "pi-usage", cost: 9, detail: "90.0%" },
+      { category: "cost", label: "Large context", cost: 1, detail: "10.0%" },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    switchToInsights(c);
+    c.handleInput("\u001b[C");
+    expect(c.render(100).join("\n")).toContain("[Cost patterns]");
+
+    state.insights = [
+      { category: "project", label: "pi-usage", cost: 9, detail: "100.0%" },
+    ];
+    expect(c.render(100).join("\n")).toContain("[Projects]");
+
+    state.insights.push({
+      category: "cost",
+      label: "Large context",
+      cost: 1,
+      detail: "10.0%",
+    });
+    expect(c.render(100).join("\n")).toContain("[Projects]");
+  });
+
+  it("keeps a maximum Insight category inside the supported overlay height", () => {
+    const state = mkState();
+    state.insights = [
+      ...Array.from({ length: 6 }, (_, index) => ({
+        category: "project",
+        label: index === 5 ? "+20 more" : `project-${index + 1}`,
+        cost: 6 - index,
+        detail: `${30 - index * 4}.0%`,
+      })),
+      { category: "skill", label: "/brainstorming", cost: 1, detail: "5.0%" },
+      { category: "mcp", label: "playwright", cost: 1, detail: "5.0%" },
+      { category: "cost", label: "Large context", cost: 1, detail: "5.0%" },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    switchToInsights(c);
+
+    expect(c.render(36).length).toBeLessThanOrEqual(20);
+    expect(c.render(73).length).toBeLessThanOrEqual(17);
+    expect(c.render(100).length).toBeLessThanOrEqual(17);
   });
 
   it("aligns quota bars by shared label width across available windows", () => {
@@ -673,7 +725,7 @@ describe("dashboard render", () => {
     expect(c.render(120).join("\n")).toContain("openai-codex");
   });
 
-  it("renders insights grouped by category in Insights tab", () => {
+  it("renders the selected Insight category with its existing format", () => {
     const state = mkState();
     state.insights = [
       { category: "project", label: "career-ops", cost: 9, detail: "90.0%" },
@@ -688,23 +740,27 @@ describe("dashboard render", () => {
     const c = new UsageDashboardComponent(state, () => undefined, {
       theme: noTheme,
     });
-    // Switch to Insights tab (Tab twice)
-    c.handleInput("\t");
-    c.handleInput("\t");
-    const lines = c.render(100);
-    const out = lines.join("\n");
-    expect(out).toContain("Projects");
+    switchToInsights(c);
+
+    let lines = c.render(100);
+    let out = lines.join("\n");
+    expect(out).toContain("[Projects]");
+    expect(out).toContain("Cost patterns");
     expect(out).toContain("career-ops");
     expect(out).toContain("90.0%");
-    expect(out).toContain("Cost patterns");
-    expect(out).toContain("Large context");
-    // Verify table structure for project category
-    const projectsIdx = lines.findIndex((l) => l.includes("Projects"));
+    expect(out).not.toContain("Large context");
+
+    const projectsIdx = lines.findIndex((line) => line.includes("% of usage"));
     expect(projectsIdx).toBeGreaterThan(-1);
-    expect(lines[projectsIdx]).toContain("% of usage");
     expect(lines[projectsIdx + 1]).toContain("career-ops");
-    // Verify bullet-list format for cost category
+
+    c.handleInput("\u001b[C");
+    lines = c.render(100);
+    out = lines.join("\n");
+    expect(out).toContain("[Cost patterns]");
+    expect(out).toContain("Large context");
     expect(out).toContain("  - Large context:");
+    expect(out).not.toContain("career-ops");
   });
 
   it("defaults insights without category to cost patterns", () => {
@@ -713,9 +769,7 @@ describe("dashboard render", () => {
     const c = new UsageDashboardComponent(state, () => undefined, {
       theme: noTheme,
     });
-    // Switch to Insights tab
-    c.handleInput("\t");
-    c.handleInput("\t");
+    switchToInsights(c);
     const out = c.render(100).join("\n");
     expect(out).toContain("Cost patterns");
     expect(out).toContain("  - No category:");
@@ -972,7 +1026,8 @@ describe("dashboard themed styling", () => {
     out = c.render(160).join("\n");
     stripped = stripAnsi(out);
     expect(stripped).toContain("[Tab/Shift-Tab] Switch tab");
-    expect(stripped).toContain("[Left/Right] Period");
+    expect(stripped).toContain("[Left/Right] Category");
+    expect(stripped).not.toContain("[Left/Right] Period");
     expect(stripped).not.toContain("[Up/Down] Row");
   });
 
