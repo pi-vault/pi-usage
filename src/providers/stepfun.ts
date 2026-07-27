@@ -11,16 +11,12 @@ import {
   toFinite,
 } from "./runtime.ts";
 
-const STEPFUN_BASE_URL = "https://platform.stepfun.com";
-const STEPFUN_WEB_ID = "c8a1002d2c457e758785a9979832217c7c0b884c";
+const STEPFUN_BASE_URL = "https://platform.stepfun.ai";
 const STEPFUN_APP_ID = "10300";
-const INVALID_STEPFUN_CREDENTIALS = "Invalid StepFun credentials.";
 
-class StepFunCredentialError extends Error {
-  constructor(message = INVALID_STEPFUN_CREDENTIALS) {
-    super(message);
-    this.name = "StepFunCredentialError";
-  }
+interface StepFunBrowserSession {
+  token: string;
+  webId: string;
 }
 
 function cleanEnvValue(raw: string | undefined): string | undefined {
@@ -42,29 +38,20 @@ function normalizeStepFunToken(raw: string | undefined): string | undefined {
   return match?.[1]?.trim() || value;
 }
 
-function resolveStepFunAuth(
+function resolveStepFunSession(
   env: NodeJS.ProcessEnv,
-):
-  | { kind: "token"; token: string }
-  | { kind: "password"; username: string; password: string }
-  | undefined {
+): StepFunBrowserSession | undefined {
   const token = normalizeStepFunToken(env.STEPFUN_TOKEN);
-  if (token) return { kind: "token", token };
-
-  const username = cleanEnvValue(env.STEPFUN_USERNAME);
-  const password = cleanEnvValue(env.STEPFUN_PASSWORD);
-  if (username && password) {
-    return { kind: "password", username, password };
-  }
-  return undefined;
+  const webId = cleanEnvValue(env.STEPFUN_WEB_ID);
+  return token && webId ? { token, webId } : undefined;
 }
 
-function baseHeaders(): Record<string, string> {
+function baseHeaders(webId: string): Record<string, string> {
   return {
     "content-type": "application/json",
     "oasis-appid": STEPFUN_APP_ID,
     "oasis-platform": "web",
-    "oasis-webid": STEPFUN_WEB_ID,
+    "oasis-webid": webId,
     "user-agent":
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/147 Safari/537.36",
   };
@@ -87,84 +74,9 @@ function buildWindow(
   };
 }
 
-function tokenFromPayload(
-  payload: Record<string, unknown> | undefined,
-): string | undefined {
-  const accessToken =
-    payload?.accessToken && typeof payload.accessToken === "object"
-      ? (payload.accessToken as Record<string, unknown>)
-      : undefined;
-  return typeof accessToken?.raw === "string" && accessToken.raw.trim()
-    ? accessToken.raw.trim()
-    : undefined;
-}
-
-function isStepFunCredentialError(
-  error: unknown,
-): error is StepFunCredentialError {
-  return error instanceof StepFunCredentialError;
-}
-
-async function loginStepFun(
-  deps: UsageDeps,
-  username: string,
-  password: string,
-  signal: AbortSignal | undefined,
-): Promise<string> {
-  const landing = await fetchWithTimeout(deps, STEPFUN_BASE_URL, {
-    method: "GET",
-    headers: baseHeaders(),
-    signal,
-  });
-  const ingress = landing.headers
-    .get("set-cookie")
-    ?.match(/INGRESSCOOKIE=([^;]+)/)?.[1];
-  if (!landing.ok || !ingress) {
-    throw new StepFunCredentialError();
-  }
-
-  const registerRes = await fetchWithTimeout(
-    deps,
-    `${STEPFUN_BASE_URL}/passport/proto.api.passport.v1.PassportService/RegisterDevice`,
-    {
-      method: "POST",
-      headers: {
-        ...baseHeaders(),
-        Cookie: `INGRESSCOOKIE=${ingress}`,
-      },
-      body: JSON.stringify({ app_id: STEPFUN_APP_ID }),
-      signal,
-    },
-  );
-  const anonToken = tokenFromPayload(await readJsonObject(registerRes));
-  if (!registerRes.ok || !anonToken) {
-    throw new StepFunCredentialError();
-  }
-
-  const loginRes = await fetchWithTimeout(
-    deps,
-    `${STEPFUN_BASE_URL}/passport/proto.api.passport.v1.PassportService/SignInByPassword`,
-    {
-      method: "POST",
-      headers: {
-        ...baseHeaders(),
-        Cookie: `Oasis-Token=${anonToken}; Oasis-Webid=${STEPFUN_WEB_ID}; INGRESSCOOKIE=${ingress}`,
-      },
-      body: JSON.stringify({ username, password }),
-      signal,
-    },
-  );
-  const token = tokenFromPayload(await readJsonObject(loginRes));
-  if (!loginRes.ok || !token) {
-    throw new StepFunCredentialError();
-  }
-
-  return token;
-}
-
 async function fetchStepFunUsage(
   deps: UsageDeps,
-  token: string,
+  session: StepFunBrowserSession,
   signal: AbortSignal | undefined,
 ): Promise<
   | { kind: "ok"; windows: LiveUsageWindow[]; planName?: string }
@@ -173,8 +85,8 @@ async function fetchStepFunUsage(
   | { kind: "error"; message: string }
 > {
   const headers = {
-    ...baseHeaders(),
-    Cookie: `Oasis-Token=${token}; Oasis-Webid=${STEPFUN_WEB_ID}`,
+    ...baseHeaders(session.webId),
+    Cookie: `Oasis-Token=${session.token}; Oasis-WebId=${session.webId}`,
   };
 
   const usageRes = await fetchWithTimeout(
@@ -261,73 +173,22 @@ export function createStepFunProvider(deps: UsageDeps): UsageProviderAdapter {
         {
           id: "stepfun",
           fetchLive: async ({ now, signal }) => {
-            const auth = resolveStepFunAuth(deps.env);
-            if (!auth) {
+            const session = resolveStepFunSession(deps.env);
+            if (!session) {
               return {
                 kind: "credentials" as const,
                 message:
-                  "Missing StepFun credentials. Set STEPFUN_TOKEN or STEPFUN_USERNAME and STEPFUN_PASSWORD.",
+                  "Missing StepFun browser session. Set STEPFUN_TOKEN and STEPFUN_WEB_ID.",
               };
             }
 
-            let token: string;
-            try {
-              token =
-                auth.kind === "token"
-                  ? auth.token
-                  : await loginStepFun(
-                      deps,
-                      auth.username,
-                      auth.password,
-                      signal,
-                    );
-            } catch (error) {
-              if (auth.kind === "password" && isStepFunCredentialError(error)) {
-                return {
-                  kind: "credentials" as const,
-                  message: INVALID_STEPFUN_CREDENTIALS,
-                };
-              }
-              throw error;
-            }
-
-            let usage = await fetchStepFunUsage(deps, token, signal);
-            if (usage.kind === "rate-limited") {
-              return {
-                kind: "rate-limited" as const,
-                message: "Rate limited.",
-                nextRetryAt: usage.retryAt,
-              };
-            }
-
-            if (usage.kind === "credentials" && auth.kind === "password") {
-              let retryToken: string;
-              try {
-                retryToken = await loginStepFun(
-                  deps,
-                  auth.username,
-                  auth.password,
-                  signal,
-                );
-              } catch (error) {
-                if (isStepFunCredentialError(error)) {
-                  return {
-                    kind: "credentials" as const,
-                    message: INVALID_STEPFUN_CREDENTIALS,
-                  };
-                }
-                throw error;
-              }
-              usage = await fetchStepFunUsage(deps, retryToken, signal);
-            }
+            const usage = await fetchStepFunUsage(deps, session, signal);
 
             if (usage.kind === "credentials") {
               return {
                 kind: "credentials" as const,
                 message:
-                  auth.kind === "token"
-                    ? "Invalid StepFun token. Refresh STEPFUN_TOKEN."
-                    : "Invalid StepFun credentials.",
+                  "Invalid StepFun browser session. Refresh STEPFUN_TOKEN and STEPFUN_WEB_ID.",
               };
             }
 
