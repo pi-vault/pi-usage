@@ -1,462 +1,429 @@
-# Phase 3: StepFun Step Plan Credits Implementation Plan
+# StepFun Step Plan Credits Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Parent plan:** `docs/superpowers/plans/2026-07-27-stepfun-credits-compact-insights-refactor.md`
+**Goal:** Normalize StepFun monthly subscription and booster Credits into one accurate LiveUsageWindow without displaying false exhaustion.
 
-**Goal:** Normalize StepFun monthly subscription and booster Credits into one accurate `LiveUsageWindow` without showing false exhaustion.
+**Architecture:** Keep the change inside the existing StepFun provider and provider test. Add one strict Credit-plan classifier and one Credit-window builder, reusing the existing runtime numeric, epoch, and percentage helpers. A complete valid bucket set supplies absolute totals; otherwise the provider selects one valid remaining-rate fallback. Legacy five-hour and weekly normalization remains unchanged.
 
-**Architecture:** Add two small provider-local boundaries: one exact Credit-plan classifier and one Credit-window builder. Valid complete bucket sets provide absolute totals; otherwise independent remaining-rate fields provide a percentage-only fallback. Legacy 5-hour/weekly normalization remains unchanged.
-
-**Tech Stack:** TypeScript 6, Vitest 4, existing `LiveUsageWindow`, `toFinite`, `parseEpochMs`, and `clampPercentRounded` helpers.
-
-**Phase dependency:** Phase 2 is committed and `.ai` browser-session legacy usage passes.
-
-**Usable result:** New Step Plan subscribers see a `Credits` bar, absolute used/total values when available, and the subscription reset. Legacy plans remain usable.
-
-**Out of scope:** Standard API account balance, separate booster bars, bucket-expiry UI, `.com`, password authentication, Insights UI, documentation, and new dependencies.
-
-## Fixed normalization contract
-
-- A payload is a Credit plan when `plan_family` parses to `2`.
-- Without `plan_family: 2`, it is Credit-only when `plan_credit_rate_limit` is an object and all four legacy rate/reset fields are absent or numerically zero.
-- Use bucket arithmetic only when every bucket is an object with finite `credit_total > 0` and finite `0 <= credit_residual <= credit_total`.
-- One invalid bucket discards the entire bucket set.
-- Without usable buckets, prefer a valid `subscription_credit_left_rate`; use `topup_credit_left_rate` only when the subscription fraction is absent or outside `[0, 1]`.
-- Never add subscription and top-up fractions.
-- Use only `subscription_credit_reset_time` for `resetAt`. Do not map `expire_at` or `next_reset_at` into the combined bar.
-- A classified Credit payload with no usable buckets or rates is malformed, not 100% used.
+**Tech Stack:** TypeScript 6, Node.js 24.15.0, Vitest 4, pnpm, existing LiveUsageWindow, toFinite, parseEpochMs, and clampPercentRounded helpers.
 
 ---
 
-### Task 1: Specify weighted Credit arithmetic
+## Scope and file responsibilities
+
+- Modify src/providers/stepfun.ts for Credit classification, bucket arithmetic, fallback selection, and one-time Credit-versus-legacy window selection.
+- Modify tests/provider-stepfun.test.ts for Credit arithmetic, classification boundaries, malformed responses, and retained legacy behavior.
+- No public type changes, new dependencies, API endpoint changes, UI changes, or documentation changes outside this plan.
+
+The Phase 2 browser-session migration is already committed. This plan is authoritative for Phase 3 and does not require a separate design-spec file.
+
+## Fixed behavior
+
+- A payload is a Credit plan when plan_family parses to 2.
+- Without plan_family parsing to 2, it is Credit-only only when plan_credit_rate_limit is a plain object and all four legacy fields are either absent (undefined) or numerically zero. A present malformed value is not absent.
+- Bucket arithmetic is allowed only for a non-empty credit_buckets array where every row is an object with finite credit_total greater than zero and finite credit_residual in the inclusive range from zero to credit_total. One invalid row invalidates the whole set.
+- The aggregate bucket totals must remain finite and internally bounded. Otherwise use the rate fallback.
+- If buckets are unusable, use subscription_credit_left_rate when it is finite and in [0, 1]. Use topup_credit_left_rate only when the subscription rate is absent or outside that range. Never add the two rates.
+- resetAt comes only from subscription_credit_reset_time. Ignore expire_at and next_reset_at.
+- A classified Credit payload with no usable buckets or rates returns the existing StepFun response-malformed error and no windows.
+- A classified Credit payload produces one window with key credits, label Credits, and unit credits. Bucket data also includes used and limit. Rate fallback includes usedPercent only.
+- The existing browser-session authentication, plan-status request, non-fatal plan-status failure, and legacy five-hour/weekly windows remain unchanged.
+
+### Task 1: Add failing Credit regression tests
 
 **Files:**
-- Modify: `tests/provider-stepfun.test.ts`
 
-- [ ] **Step 1: Add the complete-bucket test**
+- Modify: tests/provider-stepfun.test.ts
 
-```ts
-it("combines only a complete valid Credit bucket set", async () => {
-  const root = mkTmp();
-  const provider = stepfunProvider(
-    createLiveDeps(
-      root,
-      () => 1_000,
-      vi.fn<UsageDeps["fetch"]>(async (url) => {
-        if (String(url).includes("QueryStepPlanRateLimit")) {
-          return new Response(
-            JSON.stringify({
-              status: 1,
-              plan_family: "2",
-              plan_credit_rate_limit: {
-                subscription_credit_left_rate: "0.25",
-                subscription_credit_reset_time: "1778000000",
-                topup_credit_left_rate: 1,
-                credit_buckets: [
-                  {
-                    credit_total: "400000000",
-                    credit_residual: 100000000,
-                  },
-                  {
-                    credit_total: 100000000,
-                    credit_residual: "100000000",
-                  },
-                ],
-              },
-            }),
-            { status: 200 },
-          );
-        }
-        if (String(url).includes("GetStepPlanStatus")) {
-          return new Response("boom", { status: 500 });
-        }
-        throw new Error(`unexpected url: ${String(url)}`);
-      }),
-      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
-    ),
-  );
+- [ ] **Step 1: Add a reusable Credit response fixture helper**
 
-  expect((await provider.fetch()).snapshot.windows).toEqual([
-    {
-      key: "credits",
-      label: "Credits",
-      used: 300_000_000,
-      limit: 500_000_000,
-      unit: "credits",
-      usedPercent: 60,
-      resetAt: 1778000000_000,
-    },
-  ]);
-  rmSync(root, { recursive: true, force: true });
-});
-```
+Add this helper below stepfunProvider. It reuses the existing createLiveDeps and keeps every new test on the same browser-session and endpoint path:
 
-- [ ] **Step 2: Add the all-or-nothing bucket fallback test**
-
-```ts
-it("falls back to subscription rate when any Credit bucket is invalid", async () => {
-  const root = mkTmp();
-  const provider = stepfunProvider(
-    createLiveDeps(
-      root,
-      () => 1_000,
-      vi.fn<UsageDeps["fetch"]>(async (url) => {
-        if (String(url).includes("QueryStepPlanRateLimit")) {
-          return new Response(
-            JSON.stringify({
-              status: 1,
-              plan_family: 2,
-              plan_credit_rate_limit: {
-                subscription_credit_left_rate: 0.8,
-                topup_credit_left_rate: 0.5,
-                credit_buckets: [
-                  { credit_total: 100, credit_residual: 50 },
-                  { credit_total: 0, credit_residual: 0 },
-                ],
-              },
-            }),
-            { status: 200 },
-          );
-        }
-        if (String(url).includes("GetStepPlanStatus")) {
-          return new Response("boom", { status: 500 });
-        }
-        throw new Error(`unexpected url: ${String(url)}`);
-      }),
-      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
-    ),
-  );
-
-  expect((await provider.fetch()).snapshot.windows).toEqual([
-    {
-      key: "credits",
-      label: "Credits",
-      unit: "credits",
-      usedPercent: 20,
-      resetAt: undefined,
-    },
-  ]);
-  rmSync(root, { recursive: true, force: true });
-});
-```
-
-- [ ] **Step 3: Add the ordered-rate fallback test**
-
-```ts
-it("uses top-up rate only when subscription rate is unavailable", async () => {
-  const root = mkTmp();
-  const provider = stepfunProvider(
-    createLiveDeps(
-      root,
-      () => 1_000,
-      vi.fn<UsageDeps["fetch"]>(async (url) => {
-        if (String(url).includes("QueryStepPlanRateLimit")) {
-          return new Response(
-            JSON.stringify({
-              status: 1,
-              plan_family: 2,
-              plan_credit_rate_limit: {
-                subscription_credit_left_rate: 2,
-                topup_credit_left_rate: "0.4",
-              },
-            }),
-            { status: 200 },
-          );
-        }
-        if (String(url).includes("GetStepPlanStatus")) {
-          return new Response("boom", { status: 500 });
-        }
-        throw new Error(`unexpected url: ${String(url)}`);
-      }),
-      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
-    ),
-  );
-
-  expect((await provider.fetch()).snapshot.windows[0]).toEqual(
-    expect.objectContaining({
-      key: "credits",
-      usedPercent: 60,
-      resetAt: undefined,
-    }),
-  );
-  rmSync(root, { recursive: true, force: true });
-});
-```
-
-- [ ] **Step 4: Run the focused tests and confirm failure**
-
-```sh
-pnpm test -- tests/provider-stepfun.test.ts
-```
-
-Expected: FAIL because `plan_credit_rate_limit` is not normalized.
-
----
-
-### Task 2: Specify Credit classification and malformed behavior
-
-**Files:**
-- Modify: `tests/provider-stepfun.test.ts`
-
-- [ ] **Step 1: Add Credit-only classification without `plan_family`**
-
-```ts
-it("recognizes a Credit-only response without plan_family", async () => {
-  const root = mkTmp();
-  const provider = stepfunProvider(
-    createLiveDeps(
-      root,
-      () => 1_000,
-      vi.fn<UsageDeps["fetch"]>(async (url) => {
-        if (String(url).includes("QueryStepPlanRateLimit")) {
-          return new Response(
-            JSON.stringify({
-              status: 1,
-              five_hour_usage_left_rate: 0,
-              weekly_usage_left_rate: "0",
-              five_hour_usage_reset_time: "0",
-              weekly_usage_reset_time: 0,
-              plan_credit_rate_limit: {
-                subscription_credit_left_rate: "0.75",
-                subscription_credit_reset_time: 1778000000,
-              },
-            }),
-            { status: 200 },
-          );
-        }
-        if (String(url).includes("GetStepPlanStatus")) {
-          return new Response("boom", { status: 500 });
-        }
-        throw new Error(`unexpected url: ${String(url)}`);
-      }),
-      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
-    ),
-  );
-
-  expect((await provider.fetch()).snapshot.windows[0]).toEqual(
-    expect.objectContaining({
-      key: "credits",
-      usedPercent: 25,
-      resetAt: 1778000000_000,
-    }),
-  );
-  rmSync(root, { recursive: true, force: true });
-});
-```
-
-- [ ] **Step 2: Add malformed Credit-only rejection**
-
-```ts
-it("rejects malformed Credit-only responses instead of showing exhaustion", async () => {
-  const root = mkTmp();
-  const provider = stepfunProvider(
-    createLiveDeps(
-      root,
-      () => 1_000,
-      vi.fn<UsageDeps["fetch"]>(async (url) => {
-        if (String(url).includes("QueryStepPlanRateLimit")) {
-          return new Response(
-            JSON.stringify({
-              status: 1,
-              plan_family: 2,
-              plan_credit_rate_limit: {},
-            }),
-            { status: 200 },
-          );
-        }
-        throw new Error(`unexpected url: ${String(url)}`);
-      }),
-      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
-    ),
-  );
-
-  const result = await provider.fetch();
-  expect(result.snapshot.diagnostic).toBe("StepFun response malformed.");
-  expect(result.snapshot.windows).toEqual([]);
-  rmSync(root, { recursive: true, force: true });
-});
-```
-
-- [ ] **Step 3: Verify classification tests fail for the intended reason**
-
-```sh
-pnpm test -- tests/provider-stepfun.test.ts
-```
-
-Expected: FAIL because zero legacy windows are still rendered as exhausted and malformed Credit data is not rejected through a Credit-specific path.
-
----
-
-### Task 3: Implement exact Credit classification and normalization
-
-**Files:**
-- Modify: `src/providers/stepfun.ts`
-
-- [ ] **Step 1: Add the object and zero-value boundaries**
-
-```ts
-function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function zeroOrMissing(value: unknown): boolean {
-  const number = toFinite(value);
-  return number === undefined || number === 0;
-}
-```
-
-- [ ] **Step 2: Add the exact classifier**
-
-```ts
-function isCreditPlanPayload(payload: Record<string, unknown>): boolean {
-  if (toFinite(payload.plan_family) === 2) return true;
-  if (!objectValue(payload.plan_credit_rate_limit)) return false;
-  return (
-    zeroOrMissing(payload.five_hour_usage_left_rate) &&
-    zeroOrMissing(payload.weekly_usage_left_rate) &&
-    zeroOrMissing(payload.five_hour_usage_reset_time) &&
-    zeroOrMissing(payload.weekly_usage_reset_time)
-  );
-}
-```
-
-- [ ] **Step 3: Add the complete Credit-window builder**
-
-```ts
-function buildCreditWindow(
-  payload: Record<string, unknown>,
-): LiveUsageWindow | undefined {
-  const credit = objectValue(payload.plan_credit_rate_limit);
-  if (!credit) return undefined;
-
-  const resetAt = parseEpochMs(credit.subscription_credit_reset_time);
-  const buckets = Array.isArray(credit.credit_buckets)
-    ? credit.credit_buckets
-    : undefined;
-
-  if (buckets && buckets.length > 0) {
-    const parsed = buckets.map((bucket) => {
-      const row = objectValue(bucket);
-      const total = toFinite(row?.credit_total);
-      const residual = toFinite(row?.credit_residual);
-      if (
-        total === undefined ||
-        residual === undefined ||
-        total <= 0 ||
-        residual < 0 ||
-        residual > total
-      ) {
-        return undefined;
-      }
-      return { total, residual };
-    });
-    const valid = parsed.filter(
-      (bucket): bucket is { total: number; residual: number } =>
-        bucket !== undefined,
-    );
-    if (valid.length === buckets.length) {
-      const limit = valid.reduce((sum, bucket) => sum + bucket.total, 0);
-      const remaining = valid.reduce(
-        (sum, bucket) => sum + bucket.residual,
-        0,
+    function creditProvider(
+      root: string,
+      payload: Record<string, unknown>,
+    ) {
+      return stepfunProvider(
+        createLiveDeps(
+          root,
+          () => 1_000,
+          vi.fn<UsageDeps["fetch"]>(async (url) => {
+            const textUrl = String(url);
+            if (textUrl.includes("QueryStepPlanRateLimit")) {
+              return new Response(
+                JSON.stringify({ status: 1, ...payload }),
+                { status: 200 },
+              );
+            }
+            if (textUrl.includes("GetStepPlanStatus")) {
+              return new Response("boom", { status: 500 });
+            }
+            throw new Error("unexpected url: " + textUrl);
+          }),
+          { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
+        ),
       );
-      const used = limit - remaining;
+    }
+
+- [ ] **Step 2: Add the complete-bucket test**
+
+Add this test inside the existing StepFun provider describe block. Include nonzero legacy rates to prove explicit plan_family takes precedence:
+
+    it("combines only a complete valid Credit bucket set", async () => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        plan_family: "2",
+        five_hour_usage_left_rate: 0.8,
+        weekly_usage_left_rate: 0.9,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.25,
+          subscription_credit_reset_time: "1778000000",
+          topup_credit_left_rate: 1,
+          credit_buckets: [
+            { credit_total: "400000000", credit_residual: 100000000 },
+            { credit_total: 100000000, credit_residual: "100000000" },
+          ],
+        },
+      });
+
+      expect((await provider.fetch()).snapshot.windows).toEqual([
+        {
+          key: "credits",
+          label: "Credits",
+          used: 300_000_000,
+          limit: 500_000_000,
+          unit: "credits",
+          usedPercent: 60,
+          resetAt: 1778000000_000,
+        },
+      ]);
+      rmSync(root, { recursive: true, force: true });
+    });
+
+- [ ] **Step 3: Add invalid-bucket and ordered-rate fallback tests**
+
+Add both tests:
+
+    it("falls back to subscription rate when any Credit bucket is invalid", async () => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.8,
+          topup_credit_left_rate: 0.5,
+          credit_buckets: [
+            { credit_total: 100, credit_residual: 50 },
+            { credit_total: 0, credit_residual: 0 },
+          ],
+        },
+      });
+
+      expect((await provider.fetch()).snapshot.windows).toEqual([
+        {
+          key: "credits",
+          label: "Credits",
+          unit: "credits",
+          usedPercent: 20,
+          resetAt: undefined,
+        },
+      ]);
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("uses top-up rate only when subscription rate is unavailable", async () => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 2,
+          topup_credit_left_rate: "0.4",
+        },
+      });
+
+      expect((await provider.fetch()).snapshot.windows[0]).toEqual(
+        expect.objectContaining({
+          key: "credits",
+          usedPercent: 60,
+          resetAt: undefined,
+        }),
+      );
+      rmSync(root, { recursive: true, force: true });
+    });
+
+- [ ] **Step 4: Add family-less and strict-classification tests**
+
+Add the family-less Credit-only case and a table covering present nonzero or malformed legacy values:
+
+    it("recognizes Credit-only data without plan_family when legacy fields are zero", async () => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        five_hour_usage_left_rate: 0,
+        weekly_usage_left_rate: "0",
+        five_hour_usage_reset_time: "0",
+        weekly_usage_reset_time: 0,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: "0.75",
+          subscription_credit_reset_time: 1778000000,
+        },
+      });
+
+      expect((await provider.fetch()).snapshot.windows[0]).toEqual(
+        expect.objectContaining({
+          key: "credits",
+          usedPercent: 25,
+          resetAt: 1778000000_000,
+        }),
+      );
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it.each([
+      {
+        name: "nonzero legacy rate",
+        legacy: { five_hour_usage_left_rate: 0.5 },
+        expected: { key: "fiveHour", usedPercent: 50 },
+      },
+      {
+        name: "malformed legacy rate",
+        legacy: { five_hour_usage_left_rate: "not-a-number" },
+        expected: undefined,
+      },
+    ])("does not treat $name as absent for Credit classification", async ({
+      legacy,
+      expected,
+    }) => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        ...legacy,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.75,
+        },
+      });
+
+      const result = await provider.fetch();
+      if (expected) {
+        expect(result.snapshot.windows[0]).toEqual(
+          expect.objectContaining(expected),
+        );
+      } else {
+        expect(result.snapshot.diagnostic).toBe(
+          "StepFun response malformed.",
+        );
+        expect(result.snapshot.windows).toEqual([]);
+      }
+      rmSync(root, { recursive: true, force: true });
+    });
+
+- [ ] **Step 5: Add malformed explicit Credit coverage**
+
+Add this test:
+
+    it("rejects malformed Credit responses instead of showing exhaustion", async () => {
+      const root = mkTmp();
+      const provider = creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {},
+      });
+
+      const result = await provider.fetch();
+      expect(result.snapshot.diagnostic).toBe(
+        "StepFun response malformed.",
+      );
+      expect(result.snapshot.windows).toEqual([]);
+      rmSync(root, { recursive: true, force: true });
+    });
+
+- [ ] **Step 6: Run the focused tests and confirm the new tests fail**
+
+Run:
+
+    mise exec node@24.15.0 -- pnpm exec vitest run tests/provider-stepfun.test.ts
+
+Expected: the five existing tests pass and the seven new Credit tests fail because the provider still emits legacy windows or rejects the Credit fields as unsupported.
+
+### Task 2: Implement strict Credit classification and normalization
+
+**Files:**
+
+- Modify: src/providers/stepfun.ts
+
+- [ ] **Step 1: Add the provider-local object and classification boundaries**
+
+Add these functions immediately above fetchStepFunUsage. The undefined check is intentional: null, objects, and malformed strings are present values and must not satisfy the legacy-zero heuristic.
+
+    function objectValue(value: unknown): Record<string, unknown> | undefined {
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+    }
+
+    function zeroOrMissing(value: unknown): boolean {
+      return value === undefined || toFinite(value) === 0;
+    }
+
+    function isCreditPlanPayload(payload: Record<string, unknown>): boolean {
+      if (toFinite(payload.plan_family) === 2) return true;
+      if (!objectValue(payload.plan_credit_rate_limit)) return false;
+      return [
+        payload.five_hour_usage_left_rate,
+        payload.weekly_usage_left_rate,
+        payload.five_hour_usage_reset_time,
+        payload.weekly_usage_reset_time,
+      ].every(zeroOrMissing);
+    }
+
+- [ ] **Step 2: Add the Credit-window builder**
+
+Add this function immediately after the classifier:
+
+    function buildCreditWindow(
+      payload: Record<string, unknown>,
+    ): LiveUsageWindow | undefined {
+      const credit = objectValue(payload.plan_credit_rate_limit);
+      if (!credit) return undefined;
+
+      const resetAt = parseEpochMs(credit.subscription_credit_reset_time);
+      const buckets = Array.isArray(credit.credit_buckets)
+        ? credit.credit_buckets
+        : undefined;
+
+      if (buckets && buckets.length > 0) {
+        let limit = 0;
+        let remaining = 0;
+        let valid = true;
+
+        for (const bucket of buckets) {
+          const row = objectValue(bucket);
+          const total = toFinite(row?.credit_total);
+          const residual = toFinite(row?.credit_residual);
+          if (
+            total === undefined ||
+            residual === undefined ||
+            total <= 0 ||
+            residual < 0 ||
+            residual > total
+          ) {
+            valid = false;
+            break;
+          }
+          limit += total;
+          remaining += residual;
+        }
+
+        if (
+          valid &&
+          Number.isFinite(limit) &&
+          Number.isFinite(remaining) &&
+          remaining >= 0 &&
+          remaining <= limit
+        ) {
+          const used = limit - remaining;
+          return {
+            key: "credits",
+            label: "Credits",
+            used,
+            limit,
+            unit: "credits",
+            usedPercent: clampPercentRounded((used / limit) * 100),
+            resetAt,
+          };
+        }
+      }
+
+      const leftRate = [
+        credit.subscription_credit_left_rate,
+        credit.topup_credit_left_rate,
+      ]
+        .map(toFinite)
+        .find((rate) => rate !== undefined && rate >= 0 && rate <= 1);
+      if (leftRate === undefined) return undefined;
+
       return {
         key: "credits",
         label: "Credits",
-        used,
-        limit,
         unit: "credits",
-        usedPercent: clampPercentRounded((used / limit) * 100),
+        usedPercent: clampPercentRounded((1 - leftRate) * 100),
         resetAt,
       };
     }
-  }
 
-  const leftRate = [
-    credit.subscription_credit_left_rate,
-    credit.topup_credit_left_rate,
-  ]
-    .map(toFinite)
-    .find((rate) => rate !== undefined && rate >= 0 && rate <= 1);
-  if (leftRate === undefined) return undefined;
+- [ ] **Step 3: Select the Credit or legacy path once**
 
-  return {
-    key: "credits",
-    label: "Credits",
-    unit: "credits",
-    usedPercent: clampPercentRounded((1 - leftRate) * 100),
-    resetAt,
-  };
-}
-```
+Replace the current unconditional legacy windows array after payload status validation with:
 
-- [ ] **Step 4: Select Credit or legacy windows once**
+    const windows = isCreditPlanPayload(payload)
+      ? [buildCreditWindow(payload)].filter(
+          (window): window is LiveUsageWindow => window !== undefined,
+        )
+      : [
+          buildWindow(
+            "fiveHour",
+            "5h",
+            payload.five_hour_usage_left_rate,
+            payload.five_hour_usage_reset_time,
+          ),
+          buildWindow(
+            "weekly",
+            "Weekly",
+            payload.weekly_usage_left_rate,
+            payload.weekly_usage_reset_time,
+          ),
+        ].filter(
+          (window): window is LiveUsageWindow => window !== undefined,
+        );
 
-In `fetchStepFunUsage`, replace the unconditional legacy window array with:
+Keep the existing windows.length === 0 malformed-response return and leave the plan-status request below it unchanged.
 
-```ts
-const windows = isCreditPlanPayload(payload)
-  ? [buildCreditWindow(payload)].filter(
-      (window): window is LiveUsageWindow => window !== undefined,
-    )
-  : [
-      buildWindow(
-        "fiveHour",
-        "5h",
-        payload.five_hour_usage_left_rate,
-        payload.five_hour_usage_reset_time,
-      ),
-      buildWindow(
-        "weekly",
-        "Weekly",
-        payload.weekly_usage_left_rate,
-        payload.weekly_usage_reset_time,
-      ),
-    ].filter((window): window is LiveUsageWindow => window !== undefined);
-```
+- [ ] **Step 4: Run the provider tests and typecheck**
 
-Keep the existing `windows.length === 0` malformed-response branch and non-fatal plan-status request.
+Run:
 
-- [ ] **Step 5: Run focused and type checks**
+    mise exec node@24.15.0 -- pnpm exec vitest run tests/provider-stepfun.test.ts
+    mise exec node@24.15.0 -- pnpm typecheck
 
-```sh
-pnpm test -- tests/provider-stepfun.test.ts
-pnpm typecheck
-```
+Expected: all StepFun tests pass, including 60% weighted bucket usage, 20% subscription fallback, 60% top-up fallback, strict classification, malformed handling, and retained browser-session behavior. TypeScript reports no diagnostics.
 
-Expected: PASS. Weighted buckets show 60% used and 300M/500M credits; any invalid bucket falls back to the 20% subscription usage; top-up-only fallback shows 60%; malformed Credit-only data returns no windows.
+- [ ] **Step 5: Run lint on the changed implementation files**
 
-- [ ] **Step 6: Commit the atomic Credit feature**
+Run:
 
-```sh
-git add src/providers/stepfun.ts tests/provider-stepfun.test.ts
-git commit -m "feat: track StepFun Step Plan Credits"
-```
+    mise exec node@24.15.0 -- pnpm exec biome lint src/providers/stepfun.ts tests/provider-stepfun.test.ts
 
----
+Expected: no warnings, errors, or requested fixes.
 
-### Phase verification
+- [ ] **Step 6: Commit the implementation**
 
-- [ ] Run:
+Run:
 
-```sh
-pnpm check
-```
+    git add src/providers/stepfun.ts tests/provider-stepfun.test.ts
+    git commit -m "feat: track StepFun Step Plan Credits"
 
-Expected: PASS, including retained legacy StepFun tests.
+Expected: the commit contains only the provider and provider-test changes.
 
-- [ ] Review provider scope:
+### Task 3: Verify the complete Phase 3 result
 
-```sh
-git diff --check
-git status --short
-git log -1 --oneline
-```
+**Files:**
 
-Expected: no whitespace errors, no uncommitted Phase 3 files, and the latest commit is `feat: track StepFun Step Plan Credits`.
+- Verify: src/providers/stepfun.ts
+- Verify: tests/provider-stepfun.test.ts
 
-**Stop here.** StepFun browser-session users now receive either a valid Credit bar or preserved legacy windows. Phase 4 changes only Insights UI behavior.
+- [ ] **Step 1: Run the complete quality gate under the supported runtime**
+
+Run:
+
+    mise exec node@24.15.0 -- pnpm check
+
+Expected: Biome lint, TypeScript, and all 22 test files pass.
+
+- [ ] **Step 2: Check the final diff and worktree**
+
+Run:
+
+    git diff --check
+    git status --short
+    git log -1 --oneline
+
+Expected: no whitespace errors, no uncommitted implementation files, and the latest commit is feat: track StepFun Step Plan Credits.
+
+Stop here. StepFun browser-session users now receive one valid Credits bar or the preserved legacy windows; Phase 4 can change Insights UI behavior independently.
