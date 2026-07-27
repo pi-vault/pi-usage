@@ -12,7 +12,6 @@ import {
 } from "./runtime.ts";
 
 const STEPFUN_BASE_URL = "https://platform.stepfun.ai";
-const STEPFUN_APP_ID = "10300";
 
 interface StepFunBrowserSession {
   token: string;
@@ -46,17 +45,6 @@ function resolveStepFunSession(
   return token && webId ? { token, webId } : undefined;
 }
 
-function baseHeaders(webId: string): Record<string, string> {
-  return {
-    "content-type": "application/json",
-    "oasis-appid": STEPFUN_APP_ID,
-    "oasis-platform": "web",
-    "oasis-webid": webId,
-    "user-agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/147 Safari/537.36",
-  };
-}
-
 function buildWindow(
   key: "fiveHour" | "weekly",
   label: "5h" | "Weekly",
@@ -85,7 +73,12 @@ async function fetchStepFunUsage(
   | { kind: "error"; message: string }
 > {
   const headers = {
-    ...baseHeaders(session.webId),
+    "content-type": "application/json",
+    "oasis-appid": "10300",
+    "oasis-platform": "web",
+    "oasis-webid": session.webId,
+    "user-agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/147 Safari/537.36",
     Cookie: `Oasis-Token=${session.token}; Oasis-WebId=${session.webId}`,
   };
 
