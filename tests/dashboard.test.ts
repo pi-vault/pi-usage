@@ -381,6 +381,45 @@ describe("dashboard render", () => {
     expect(out).not.toContain("All Time");
   });
 
+  it("keeps populated Insight categories in fixed order", () => {
+    const state = mkState();
+    state.insights = [
+      { category: "cost", label: "Large context", cost: 1, detail: "10.0%" },
+      { category: "mcp", label: "playwright", cost: 1, detail: "10.0%" },
+      { category: "skill", label: "/brainstorming", cost: 1, detail: "10.0%" },
+      { category: "project", label: "pi-usage", cost: 7, detail: "70.0%" },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    switchToInsights(c);
+
+    const out = c.render(100).join("\n");
+    const projects = out.indexOf("[Projects]");
+    const skills = out.indexOf("Skills");
+    const mcpServers = out.indexOf("MCP servers");
+    const costPatterns = out.indexOf("Cost patterns");
+    expect(projects).toBeGreaterThan(-1);
+    expect(skills).toBeGreaterThan(projects);
+    expect(mcpServers).toBeGreaterThan(skills);
+    expect(costPatterns).toBeGreaterThan(mcpServers);
+  });
+
+  it("excludes unknown Insight categories", () => {
+    const state = mkState();
+    state.insights = [
+      { category: "future", label: "Unknown category", cost: 1, detail: "100.0%" },
+    ];
+    const c = new UsageDashboardComponent(state, () => undefined, {
+      theme: noTheme,
+    });
+    switchToInsights(c);
+
+    const out = c.render(100).join("\n");
+    expect(out).toContain("No insights yet.");
+    expect(out).not.toContain("Unknown category");
+  });
+
   it("cycles Insight categories without changing the Statistics period", () => {
     const state = mkState();
     state.insights = [
