@@ -62,6 +62,98 @@ function buildWindow(
   };
 }
 
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+function strictFinite(value: unknown): number | undefined {
+  return typeof value === "string" && !value.trim() ? undefined : toFinite(value);
+}
+
+function zeroOrMissing(value: unknown): boolean {
+  return value === undefined || strictFinite(value) === 0;
+}
+function isCreditPlanPayload(payload: Record<string, unknown>): boolean {
+  if (toFinite(payload.plan_family) === 2) return true;
+  if (!objectValue(payload.plan_credit_rate_limit)) return false;
+  return [
+    payload.five_hour_usage_left_rate,
+    payload.weekly_usage_left_rate,
+    payload.five_hour_usage_reset_time,
+    payload.weekly_usage_reset_time,
+  ].every(zeroOrMissing);
+}
+
+function buildCreditWindow(
+  payload: Record<string, unknown>,
+): LiveUsageWindow | undefined {
+  const rateLimit = objectValue(payload.plan_credit_rate_limit);
+  if (!rateLimit) return undefined;
+
+  const resetAt = parseEpochMs(rateLimit.subscription_credit_reset_time);
+  const buckets = rateLimit.credit_buckets;
+  if (Array.isArray(buckets) && buckets.length > 0) {
+    let limit = 0;
+    let remaining = 0;
+    let valid = true;
+
+    for (const bucket of buckets) {
+      const values = objectValue(bucket);
+      const total = values && strictFinite(values.credit_total);
+      const residual = values && strictFinite(values.credit_residual);
+      if (
+        total === undefined ||
+        total <= 0 ||
+        residual === undefined ||
+        residual < 0 ||
+        residual > total
+      ) {
+        valid = false;
+        break;
+      }
+      limit += total;
+      remaining += residual;
+    }
+
+    if (
+      valid &&
+      Number.isFinite(limit) &&
+      Number.isFinite(remaining) &&
+      limit > 0 &&
+      remaining >= 0 &&
+      remaining <= limit
+    ) {
+      const used = limit - remaining;
+      return {
+        key: "credits",
+        label: "Credits",
+        used,
+        limit,
+        unit: "credits",
+        usedPercent: clampPercentRounded((used / limit) * 100),
+        resetAt,
+      };
+    }
+  }
+
+  const leftRate = [
+    rateLimit.subscription_credit_left_rate,
+    rateLimit.topup_credit_left_rate,
+  ]
+    .map(strictFinite)
+    .find((rate) => rate !== undefined && rate >= 0 && rate <= 1);
+  if (leftRate === undefined) return undefined;
+
+  return {
+    key: "credits",
+    label: "Credits",
+    unit: "credits",
+    usedPercent: clampPercentRounded((1 - leftRate) * 100),
+    resetAt,
+  };
+}
+
 async function fetchStepFunUsage(
   deps: UsageDeps,
   session: StepFunBrowserSession,
@@ -111,20 +203,24 @@ async function fetchStepFunUsage(
     return { kind: "error", message: "StepFun response malformed." };
   }
 
-  const windows = [
-    buildWindow(
-      "fiveHour",
-      "5h",
-      payload.five_hour_usage_left_rate,
-      payload.five_hour_usage_reset_time,
-    ),
-    buildWindow(
-      "weekly",
-      "Weekly",
-      payload.weekly_usage_left_rate,
-      payload.weekly_usage_reset_time,
-    ),
-  ].filter((window): window is LiveUsageWindow => Boolean(window));
+  const windows = isCreditPlanPayload(payload)
+    ? [buildCreditWindow(payload)].filter(
+        (window): window is LiveUsageWindow => window !== undefined,
+      )
+    : [
+        buildWindow(
+          "fiveHour",
+          "5h",
+          payload.five_hour_usage_left_rate,
+          payload.five_hour_usage_reset_time,
+        ),
+        buildWindow(
+          "weekly",
+          "Weekly",
+          payload.weekly_usage_left_rate,
+          payload.weekly_usage_reset_time,
+        ),
+      ].filter((window): window is LiveUsageWindow => window !== undefined);
 
   if (windows.length === 0) {
     return { kind: "error", message: "StepFun response malformed." };

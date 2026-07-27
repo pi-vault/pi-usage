@@ -33,6 +33,28 @@ function stepfunProvider(deps: UsageDeps) {
   return provider;
 }
 
+function creditProvider(root: string, payload: Record<string, unknown>) {
+  return stepfunProvider(
+    createLiveDeps(
+      root,
+      () => 1_000,
+      vi.fn<UsageDeps["fetch"]>(async (url) => {
+        const textUrl = String(url);
+        if (textUrl.includes("QueryStepPlanRateLimit")) {
+          return new Response(JSON.stringify({ status: 1, ...payload }), {
+            status: 200,
+          });
+        }
+        if (textUrl.includes("GetStepPlanStatus")) {
+          return new Response("boom", { status: 500 });
+        }
+        throw new Error(`unexpected url: ${textUrl}`);
+      }),
+      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
+    ),
+  );
+}
+
 describe("StepFun provider", () => {
   it("requires a complete StepFun browser session", async () => {
     const envs: Array<Record<string, string>> = [
@@ -189,6 +211,270 @@ describe("StepFun provider", () => {
 
     const result = await stepfunProvider(deps).fetch();
     expect(result.nextRetryAt).toBe(61_000);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("combines only a complete valid Credit bucket set", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: "2",
+        five_hour_usage_left_rate: 0.8,
+        weekly_usage_left_rate: 0.9,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.25,
+          subscription_credit_reset_time: "1778000000",
+          topup_credit_left_rate: 1,
+          credit_buckets: [
+            { credit_total: "400000000", credit_residual: 100000000 },
+            { credit_total: 100000000, credit_residual: "100000000" },
+          ],
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        used: 300_000_000,
+        limit: 500_000_000,
+        unit: "credits",
+        usedPercent: 60,
+        resetAt: 1778000000_000,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("falls back to subscription rate when Credit bucket aggregates overflow", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.8,
+          credit_buckets: [
+            { credit_total: Number.MAX_VALUE, credit_residual: Number.MAX_VALUE },
+            { credit_total: Number.MAX_VALUE, credit_residual: Number.MAX_VALUE },
+          ],
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 20,
+        resetAt: undefined,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("falls back to subscription rate when any Credit bucket is invalid", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.8,
+          topup_credit_left_rate: 0.5,
+          credit_buckets: [
+            { credit_total: 100, credit_residual: 50 },
+            { credit_total: 0, credit_residual: 0 },
+          ],
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 20,
+        resetAt: undefined,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("uses the subscription reset when falling back to a top-up rate", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 2,
+          topup_credit_left_rate: "0.4",
+          subscription_credit_reset_time: "1778000000",
+          topup_credit_reset_time: "1888000000",
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 60,
+        resetAt: 1778000000_000,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("recognizes Credit-only data without plan_family when legacy fields are zero", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        five_hour_usage_left_rate: 0,
+        weekly_usage_left_rate: "0",
+        five_hour_usage_reset_time: "0",
+        weekly_usage_reset_time: 0,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: "0.75",
+          subscription_credit_reset_time: 1778000000,
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 25,
+        resetAt: 1778000000_000,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("uses top-up Credit rate when subscription rate is blank", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: " ",
+          topup_credit_left_rate: 0.4,
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 60,
+        resetAt: undefined,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects a Credit bucket with a blank residual", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 0.8,
+          credit_buckets: [{ credit_total: 100, credit_residual: " " }],
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.windows).toEqual([
+      {
+        key: "credits",
+        label: "Credits",
+        unit: "credits",
+        usedPercent: 20,
+        resetAt: undefined,
+      },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects a blank top-up Credit rate", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {
+          subscription_credit_left_rate: 2,
+          topup_credit_left_rate: " ",
+        },
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.diagnostic).toBe("StepFun response malformed.");
+    expect(snapshot.windows).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    {
+      name: "a nonzero legacy five-hour rate",
+      leftRate: 0.5,
+      expectedWindows: [
+        { key: "fiveHour", label: "5h", usedPercent: 50, resetAt: undefined },
+      ],
+      malformed: false,
+    },
+    {
+      name: "a malformed legacy five-hour rate",
+      leftRate: "not-a-number",
+      expectedWindows: [],
+      malformed: true,
+    },
+    {
+      name: "a blank legacy five-hour rate",
+      leftRate: "   ",
+      expectedWindows: [
+        { key: "fiveHour", label: "5h", usedPercent: 100, resetAt: undefined },
+      ],
+      malformed: false,
+    },
+  ])(
+    "does not treat $name as absent for Credit classification",
+    async ({ leftRate, expectedWindows, malformed }) => {
+      const root = mkTmp();
+      const snapshot = (
+        await creditProvider(root, {
+          five_hour_usage_left_rate: leftRate,
+          plan_credit_rate_limit: {
+            subscription_credit_left_rate: 0.75,
+          },
+        }).fetch()
+      ).snapshot;
+
+      expect(snapshot.windows).toEqual(expectedWindows);
+      if (malformed) {
+        expect(snapshot.diagnostic).toBe("StepFun response malformed.");
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
+  );
+
+  it("rejects malformed Credit responses instead of showing exhaustion", async () => {
+    const root = mkTmp();
+    const snapshot = (
+      await creditProvider(root, {
+        plan_family: 2,
+        plan_credit_rate_limit: {},
+      }).fetch()
+    ).snapshot;
+
+    expect(snapshot.diagnostic).toBe("StepFun response malformed.");
+    expect(snapshot.windows).toEqual([]);
     rmSync(root, { recursive: true, force: true });
   });
 });
