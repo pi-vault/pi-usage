@@ -34,10 +34,42 @@ function stepfunProvider(deps: UsageDeps) {
 }
 
 describe("StepFun provider", () => {
-  it("prefers STEPFUN_TOKEN over username/password and normalizes cookie-style input", async () => {
+  it("requires a complete StepFun browser session", async () => {
+    const envs: Array<Record<string, string>> = [
+      {},
+      { STEPFUN_TOKEN: "token" },
+      { STEPFUN_WEB_ID: "web-id" },
+      { STEPFUN_USERNAME: "user@example.com", STEPFUN_PASSWORD: "secret" },
+    ];
+
+    for (const env of envs) {
+      const root = mkTmp();
+      const fetchImpl = vi.fn<UsageDeps["fetch"]>();
+      const result = await stepfunProvider(
+        createLiveDeps(root, () => 1_000, fetchImpl, env),
+      ).fetch();
+
+      expect(result.snapshot.diagnostic).toBe(
+        "Missing StepFun browser session. Set STEPFUN_TOKEN and STEPFUN_WEB_ID.",
+      );
+      expect(fetchImpl).not.toHaveBeenCalled();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the .ai dashboard with the matching browser Web ID", async () => {
     const root = mkTmp();
-    const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url) => {
-      if (String(url).includes("QueryStepPlanRateLimit")) {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url, init) => {
+      const textUrl = String(url);
+      calls.push(textUrl);
+      const headers = new Headers(init?.headers);
+      expect(headers.get("oasis-webid")).toBe("browser-web-id");
+      expect(headers.get("cookie")).toBe(
+        "Oasis-Token=test-token; Oasis-WebId=browser-web-id",
+      );
+
+      if (textUrl.includes("QueryStepPlanRateLimit")) {
         return new Response(
           JSON.stringify({
             status: 1,
@@ -49,112 +81,32 @@ describe("StepFun provider", () => {
           { status: 200 },
         );
       }
-      if (String(url).includes("GetStepPlanStatus")) {
-        return new Response(
-          JSON.stringify({ status: 1, subscription: { name: "Plus" } }),
-          { status: 200 },
-        );
-      }
-      throw new Error(`unexpected url: ${String(url)}`);
-    });
-
-    const provider = stepfunProvider(
-      createLiveDeps(root, () => 1_000, fetchImpl, {
-        STEPFUN_TOKEN: "Oasis-Token=test-token; Oasis-Webid=abc",
-        STEPFUN_USERNAME: "user@example.com",
-        STEPFUN_PASSWORD: "secret",
-      }),
-    );
-
-    const result = await provider.fetch();
-    expect(result.snapshot.status).toBe("live");
-    expect(result.snapshot.planName).toBe("Plus");
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("logs in with username/password, fetches usage, and reads plan name", async () => {
-    const root = mkTmp();
-    const calls: string[] = [];
-    const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url, init) => {
-      const textUrl = String(url);
-      calls.push(textUrl);
-
-      if (textUrl === "https://platform.stepfun.com") {
-        return new Response("", {
-          status: 200,
-          headers: { "set-cookie": "INGRESSCOOKIE=ingress-cookie; Path=/;" },
-        });
-      }
-      if (textUrl.includes("RegisterDevice")) {
-        return new Response(
-          JSON.stringify({ accessToken: { raw: "anon-token" } }),
-          { status: 200 },
-        );
-      }
-      if (textUrl.includes("SignInByPassword")) {
-        return new Response(
-          JSON.stringify({ accessToken: { raw: "live-token" } }),
-          { status: 200 },
-        );
-      }
-      if (textUrl.includes("QueryStepPlanRateLimit")) {
-        expect(new Headers(init?.headers).get("cookie")).toContain(
-          "Oasis-Token=live-token",
-        );
-        return new Response(
-          JSON.stringify({
-            status: 1,
-            five_hour_usage_left_rate: 0.6,
-            weekly_usage_left_rate: 0.25,
-            five_hour_usage_reset_time: "1777528800",
-            weekly_usage_reset_time: 1778000000,
-          }),
-          { status: 200 },
-        );
-      }
       if (textUrl.includes("GetStepPlanStatus")) {
         return new Response(
-          JSON.stringify({
-            status: 1,
-            subscription: { name: "Plus" },
-          }),
+          JSON.stringify({ status: 1, subscription: { name: "Plus" } }),
           { status: 200 },
         );
       }
       throw new Error(`unexpected url: ${textUrl}`);
     });
 
-    const provider = stepfunProvider(
+    const result = await stepfunProvider(
       createLiveDeps(root, () => 1_000, fetchImpl, {
-        STEPFUN_USERNAME: "user@example.com",
-        STEPFUN_PASSWORD: "secret",
+        STEPFUN_TOKEN: "Oasis-Token=test-token; Path=/",
+        STEPFUN_WEB_ID: "browser-web-id",
       }),
-    );
+    ).fetch();
 
-    const result = await provider.fetch();
+    expect(result.snapshot.status).toBe("live");
     expect(result.snapshot.planName).toBe("Plus");
     expect(result.snapshot.windows).toEqual([
-      expect.objectContaining({
-        key: "fiveHour",
-        label: "5h",
-        usedPercent: 40,
-        resetAt: 1777528800_000,
-      }),
-      expect.objectContaining({
-        key: "weekly",
-        label: "Weekly",
-        usedPercent: 75,
-        resetAt: 1778000000_000,
-      }),
+      expect.objectContaining({ key: "fiveHour", usedPercent: 20 }),
+      expect.objectContaining({ key: "weekly", usedPercent: 50 }),
     ]);
-    expect(calls).toEqual([
-      "https://platform.stepfun.com",
-      expect.stringContaining("RegisterDevice"),
-      expect.stringContaining("SignInByPassword"),
-      expect.stringContaining("QueryStepPlanRateLimit"),
-      expect.stringContaining("GetStepPlanStatus"),
-    ]);
+    expect(calls).toHaveLength(2);
+    expect(
+      calls.every((url) => url.startsWith("https://platform.stepfun.ai")),
+    ).toBe(true);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -183,7 +135,7 @@ describe("StepFun provider", () => {
           }
           throw new Error(`unexpected url: ${textUrl}`);
         }),
-        { STEPFUN_TOKEN: "token" },
+        { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
       ),
     );
 
@@ -193,63 +145,29 @@ describe("StepFun provider", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("returns a credential diagnostic for invalid token-only auth", async () => {
-    const root = mkTmp();
-    const provider = stepfunProvider(
-      createLiveDeps(
-        root,
-        () => 1_000,
-        vi.fn<UsageDeps["fetch"]>(async (url) => {
-          if (String(url).includes("QueryStepPlanRateLimit")) {
-            return new Response("denied", { status: 401 });
-          }
-          throw new Error(`unexpected url: ${String(url)}`);
-        }),
-        { STEPFUN_TOKEN: "bad-token" },
-      ),
-    );
+  it("returns a browser-session diagnostic for an unauthorized dashboard", async () => {
+    for (const status of [401, 403]) {
+      const root = mkTmp();
+      const provider = stepfunProvider(
+        createLiveDeps(
+          root,
+          () => 1_000,
+          vi.fn<UsageDeps["fetch"]>(async (url) => {
+            if (String(url).includes("QueryStepPlanRateLimit")) {
+              return new Response("denied", { status });
+            }
+            throw new Error(`unexpected url: ${String(url)}`);
+          }),
+          { STEPFUN_TOKEN: "bad-token", STEPFUN_WEB_ID: "web-id" },
+        ),
+      );
 
-    const result = await provider.fetch();
-    expect(result.snapshot.diagnostic).toBe(
-      "Invalid StepFun token. Refresh STEPFUN_TOKEN.",
-    );
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("returns a credential diagnostic for invalid username/password auth", async () => {
-    const root = mkTmp();
-    const provider = stepfunProvider(
-      createLiveDeps(
-        root,
-        () => 1_000,
-        vi.fn<UsageDeps["fetch"]>(async (url) => {
-          if (String(url) === "https://platform.stepfun.com") {
-            return new Response("", {
-              status: 200,
-              headers: { "set-cookie": "INGRESSCOOKIE=ingress-cookie; Path=/;" },
-            });
-          }
-          if (String(url).includes("RegisterDevice")) {
-            return new Response(
-              JSON.stringify({ accessToken: { raw: "anon-token" } }),
-              { status: 200 },
-            );
-          }
-          if (String(url).includes("SignInByPassword")) {
-            return new Response("denied", { status: 401 });
-          }
-          throw new Error(`unexpected url: ${String(url)}`);
-        }),
-        {
-          STEPFUN_USERNAME: "user@example.com",
-          STEPFUN_PASSWORD: "bad-secret",
-        },
-      ),
-    );
-
-    const result = await provider.fetch();
-    expect(result.snapshot.diagnostic).toBe("Invalid StepFun credentials.");
-    rmSync(root, { recursive: true, force: true });
+      const result = await provider.fetch();
+      expect(result.snapshot.diagnostic).toBe(
+        "Invalid StepFun browser session. Refresh STEPFUN_TOKEN and STEPFUN_WEB_ID.",
+      );
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("creates provider backoff on 429", async () => {
@@ -266,7 +184,7 @@ describe("StepFun provider", () => {
         }
         throw new Error(`unexpected url: ${String(url)}`);
       }),
-      { STEPFUN_TOKEN: "token" },
+      { STEPFUN_TOKEN: "token", STEPFUN_WEB_ID: "web-id" },
     );
 
     const result = await stepfunProvider(deps).fetch();
