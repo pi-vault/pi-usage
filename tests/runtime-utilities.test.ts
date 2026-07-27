@@ -30,7 +30,7 @@ describe("fetchWithTimeout", () => {
     });
     await expect(
       fetchWithTimeout(deps, "https://example.com/slow", {}, 10),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("respects external signal", async () => {
@@ -44,7 +44,7 @@ describe("fetchWithTimeout", () => {
     });
     await expect(
       fetchWithTimeout(deps, "https://example.com", { signal: external }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("cleans up timer on success", async () => {

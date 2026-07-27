@@ -136,7 +136,7 @@ The explicit guard preserves the test’s expectation that `fetchWithTimeout` su
 Run:
 
 ```sh
-mise exec node@24.15.0 -- pnpm test -- tests/overlay-render.test.ts tests/runtime-utilities.test.ts
+mise exec node@24.15.0 -- pnpm exec vitest run tests/overlay-render.test.ts tests/runtime-utilities.test.ts
 ```
 
 Expected: all tests in both files pass.
