@@ -414,13 +414,11 @@ export class UsageDashboardComponent implements Component {
   private activeInsightCategory(
     categories: AvailableInsightCategory[],
   ): AvailableInsightCategory | undefined {
-    const selected = categories.find(
-      (category) => category.id === this.insightsCategory,
-    );
-    if (selected) return selected;
-    const fallback = categories[0];
-    if (fallback) this.insightsCategory = fallback.id;
-    return fallback;
+    const active =
+      categories.find((category) => category.id === this.insightsCategory) ??
+      categories[0];
+    if (active) this.insightsCategory = active.id;
+    return active;
   }
 
   private renderInsightCategory(category: AvailableInsightCategory): string[] {
@@ -466,7 +464,7 @@ export class UsageDashboardComponent implements Component {
     lines.push(
       ...this.renderTabs(
         categories.map((category) => category.label),
-        categories.findIndex((category) => category.id === active.id),
+        categories.indexOf(active),
         w,
       ),
     );
@@ -653,9 +651,7 @@ export class UsageDashboardComponent implements Component {
     const categories = this.availableInsightCategories();
     const active = this.activeInsightCategory(categories);
     if (!active) return;
-    const index = categories.findIndex(
-      (category) => category.id === active.id,
-    );
+    const index = categories.indexOf(active);
     this.insightsCategory =
       categories[(index + delta + categories.length) % categories.length].id;
   }
