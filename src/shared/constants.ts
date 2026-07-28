@@ -59,8 +59,8 @@ export const UI_STRINGS = {
       "[q/Esc] Close",
     ].join(" • "),
     insights: [
-      "[Tab/Shift-Tab] Switch tab",
       "[Left/Right] Category",
+      "[Tab/Shift-Tab] Switch tab",
       "[q/Esc] Close",
     ].join(" • "),
   },

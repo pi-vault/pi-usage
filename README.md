@@ -70,14 +70,7 @@ Shows supported live providers. Configured providers return live quota and balan
 
 ![Insights tab](docs/assets/insights.png)
 
-Breakdowns for the selected period. Toggle visibility by switching to this tab.
-
-- Most expensive projects in your local session history.
-- Active skill breakdown when that data is present.
-- MCP server breakdown when that data is present.
-- Grouped insight categories with capped lists and overflow summaries so long sections stay readable.
-
-The Insights period selector is independent of the Usage Statistics period.
+Shows all-time breakdowns from local Pi session history. Left/Right switches between the available `Projects`, `Skills`, `MCP servers`, and `Cost patterns` categories. Only categories with data appear, and each category keeps its capped list plus overflow summary.
 
 ## Keyboard Shortcuts
 
@@ -99,7 +92,7 @@ Current Usage tab:
 
 Insights tab:
 
-- `[Left/Right]` switch period.
+- `[Left/Right]` switch category.
 
 The footer at the bottom of the dashboard shows the contextual shortcuts for the active tab.
 
@@ -175,10 +168,19 @@ Optional override:
 
 #### StepFun
 
-Set one of:
+Pi Usage reads Step Plan Credits from your logged-in StepFun Platform browser session.
 
-- `STEPFUN_TOKEN`
-- `STEPFUN_USERNAME` and `STEPFUN_PASSWORD`
+1. Sign in at [platform.stepfun.ai](https://platform.stepfun.ai/).
+2. Open browser DevTools → **Application** → **Storage** → **Cookies** → `https://platform.stepfun.ai`.
+3. Copy the `Oasis-Token` and `Oasis-Webid` cookie values.
+4. Export them before starting Pi:
+
+   ```sh
+   export STEPFUN_TOKEN='your-oasis-token'
+   export STEPFUN_WEB_ID='your-oasis-web-id'
+   ```
+
+Both values are secrets. Do not commit or share them. When the browser session expires, copy and export fresh cookie values.
 
 #### OpenCode Go
 

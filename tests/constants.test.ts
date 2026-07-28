@@ -14,9 +14,9 @@ describe("UI_STRINGS.dashboardFooters", () => {
     );
   });
 
-  it("insights footer matches expected format", () => {
+  it("prioritizes category navigation in the insights footer", () => {
     expect(UI_STRINGS.dashboardFooters.insights).toBe(
-      "[Tab/Shift-Tab] Switch tab \u2022 [Left/Right] Category \u2022 [q/Esc] Close",
+      "[Left/Right] Category \u2022 [Tab/Shift-Tab] Switch tab \u2022 [q/Esc] Close",
     );
   });
 });

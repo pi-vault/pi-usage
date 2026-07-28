@@ -5,6 +5,24 @@ All notable changes to `@pi-vault/pi-usage` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Updated the `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` development ranges to `^0.82.0`; the lockfile resolves both to 0.82.1.
+- Migrated StepFun Step Plan tracking to `platform.stepfun.ai` browser-session credentials and monthly Credit usage.
+- Replaced the unsupported Insights period selector with compact all-time category navigation.
+
+### Fixed
+
+- Matched the current StepFun browser request headers and cookie casing.
+- Kept Insights category navigation visible in constrained-width footers.
+- Kept open dashboard overlays synchronized with completed provider and offline-history updates.
+
+### Removed
+
+- StepFun username/password login and legacy `.com` dashboard requests.
+
 ## [0.6.0] - 2026-07-05
 
 ### Added

@@ -165,13 +165,14 @@ async function fetchStepFunUsage(
   | { kind: "error"; message: string }
 > {
   const headers = {
+    "connect-protocol-version": "1",
     "content-type": "application/json",
-    "oasis-appid": "10300",
+    "oasis-appid": "20700",
     "oasis-platform": "web",
     "oasis-webid": session.webId,
     "user-agent":
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/147 Safari/537.36",
-    Cookie: `Oasis-Token=${session.token}; Oasis-WebId=${session.webId}`,
+    Cookie: `Oasis-Token=${session.token}; Oasis-Webid=${session.webId}`,
   };
 
   const usageRes = await fetchWithTimeout(
