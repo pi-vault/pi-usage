@@ -1068,6 +1068,10 @@ describe("dashboard themed styling", () => {
     expect(stripped).toContain("[Left/Right] Category");
     expect(stripped).not.toContain("[Left/Right] Period");
     expect(stripped).not.toContain("[Up/Down] Row");
+
+    expect(stripAnsi(c.render(40).join("\n"))).toContain(
+      "[Left/Right] Category",
+    );
   });
 
   it("strips ANSI before applying final truncation so visible width is preserved", () => {

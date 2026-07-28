@@ -50,7 +50,7 @@ This is the minimum release fix: no new event channel, state store, polling API,
 
 The README will:
 
-- replace StepFun username/password guidance with the `Oasis-Token` and `Oasis-WebId` browser-session procedure;
+- replace StepFun username/password guidance with the `Oasis-Token` and `Oasis-Webid` browser-session procedure;
 - identify both values as secrets and explain session renewal;
 - describe Insights as all-time category navigation;
 - state that only populated Projects, Skills, MCP servers, and Cost patterns categories appear;
@@ -85,6 +85,8 @@ The normal-size release screenshot will select Cost patterns because it demonstr
 ## StepFun evidence and release gate
 
 A live StepFun check requires both `STEPFUN_TOKEN` and `STEPFUN_WEB_ID` in the transient Pi process environment. Neither value may be printed, persisted, captured, or committed.
+
+A browser-copied request obtained during verification confirmed that the `.ai` API requires `oasis-appid: 20700`, `connect-protocol-version: 1`, and the case-sensitive `Oasis-Webid` cookie name. Phase 5 includes this narrow provider correction and regression coverage despite the original documentation-only provider scope.
 
 The check must confirm one Credits bar, the returned plan name when available, valid absolute used/total values when the response provides a complete valid bucket set, and only the subscription reset when present.
 

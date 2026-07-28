@@ -21,7 +21,9 @@
 ## File map
 
 - Modify `src/tui/dashboard.ts`: consume `UsageCorePayload.state` before repainting an open overlay.
-- Modify `tests/dashboard.test.ts`: prove an async update replaces loading state and preserve listener cleanup coverage.
+- Modify `tests/dashboard.test.ts`: prove an async update replaces loading state, preserve listener cleanup coverage, and keep Category navigation visible at 40 columns.
+- Modify `src/shared/constants.ts` and `tests/constants.test.ts`: prioritize the active Insights control in constrained footers.
+- Modify `src/providers/stepfun.ts` and `tests/provider-stepfun.test.ts`: match the browser-confirmed `.ai` Connect request contract.
 - Modify `README.md`: document StepFun browser-session cookies and compact all-time Insights navigation.
 - Modify `CHANGELOG.md`: add one accurate Unreleased entry, including the async dashboard fix.
 - Modify `docs/assets/insights.png`: replace the legacy period-selector image with privacy-safe Cost patterns evidence.
@@ -30,7 +32,7 @@
 
 ## Constraints
 
-- Do not change provider behavior, Insights calculations, overlay dimensions, dependency ranges, package version, or public APIs.
+- Do not change provider behavior except for the browser-confirmed StepFun `.ai` request contract (`oasis-appid: 20700`, `connect-protocol-version: 1`, and `Oasis-Webid` cookie casing). Do not change Insights calculations, overlay dimensions, dependency ranges, package version, or public APIs.
 - Run every local Pi visual check as `pi --no-extensions -e .`. Plain `pi -e .` may also load the installed `@pi-vault/pi-usage`, whose global guard can skip this checkout.
 - Never print, persist, capture, or commit `STEPFUN_TOKEN` or `STEPFUN_WEB_ID` values.
 - Do not dismiss a refreshing dashboard while `Loading session history...` is visible; `q` and `Esc` invoke `cancelScan`.
@@ -224,7 +226,7 @@ Pi Usage reads Step Plan Credits from your logged-in StepFun Platform browser se
 
 1. Sign in at [platform.stepfun.ai](https://platform.stepfun.ai/).
 2. Open browser DevTools → **Application** → **Storage** → **Cookies** → `https://platform.stepfun.ai`.
-3. Copy the `Oasis-Token` and `Oasis-WebId` cookie values.
+3. Copy the `Oasis-Token` and `Oasis-Webid` cookie values.
 4. Export them before starting Pi:
 
    ```sh
@@ -503,7 +505,7 @@ Use disposable browser-session values. Run this in a private terminal that is no
 bash -c '
   read -rsp "StepFun Oasis-Token: " token
   printf "\n"
-  read -rsp "StepFun Oasis-WebId: " web_id
+  read -rsp "StepFun Oasis-Webid: " web_id
   printf "\n"
   exec env STEPFUN_TOKEN="$token" STEPFUN_WEB_ID="$web_id" \
     pi --no-extensions -e .

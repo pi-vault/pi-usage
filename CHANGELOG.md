@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Matched the current StepFun browser request headers and cookie casing.
+- Kept Insights category navigation visible in constrained-width footers.
 - Kept open dashboard overlays synchronized with completed provider and offline-history updates.
 
 ### Removed
