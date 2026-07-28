@@ -5,109 +5,112 @@
 [![Node >= 24.15.0](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Track Pi usage across your sessions in one dashboard. `@pi-vault/pi-usage` combines offline history with live provider snapshots so you can review costs, tokens, session activity, current quotas, and usage insights without leaving Pi.
+`@pi-vault/pi-usage` tracks Pi usage across local sessions and supported live providers in one dashboard. Use it to review costs, tokens, session activity, current quotas, balances, and usage insights without leaving Pi.
 
 ## Install
+
+Install the extension with Pi:
 
 ```bash
 pi install npm:@pi-vault/pi-usage
 ```
 
-Then reload Pi:
+Reload Pi after installation or an update:
 
-```bash
+```text
 /reload
 ```
 
-## Quick Start
+## Use it
 
-Open the dashboard with cached data:
+Open the dashboard with cached data when available:
 
 ```text
 /usage
 ```
 
-Force a live refresh, rescan local history, and reopen:
+Force live-provider refresh, rescan local session history, and open the dashboard:
 
 ```text
 /usage:refresh
 ```
 
-## Commands
+Use `/usage` for a quick inspection and `/usage:refresh` when you need current provider data or a fresh offline-history scan.
 
-| Command           | Purpose                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| `/usage`          | Open the dashboard. Uses cached live data when available. Quick inspection.              |
-| `/usage:refresh`  | Force a live refresh, rescan local session history, then open the dashboard.             |
+## Dashboard
 
-## Dashboard Tabs
+The dashboard is a tabbed overlay. Press `Tab` or `Shift-Tab` to move between its three views.
 
-The dashboard renders as a tabbed overlay. Switch tabs with `Tab` / `Shift-Tab`.
-
-### Usage Statistics (default)
+### Usage Statistics
 
 ![Usage Statistics tab](docs/assets/usage-statistics.png)
 
-Aggregates local Pi session history for the selected period.
+Aggregates local Pi session history for the selected period:
 
-- Period selector: `Today`, `This Week`, `Last Week`, `All Time`.
-- Aggregated provider/model table with expandable rows.
-- Total row for everything currently shown.
-- Per-row counts for sessions, messages, cost, total tokens, input, output, cache reads, and cache writes.
+- `Today`, `This Week`, `Last Week`, or `All Time`.
+- Provider/model rows that can be expanded and collapsed.
+- Totals for sessions, messages, cost, total tokens, input, output, cache reads, and cache writes.
 
 ### Current Usage
 
 ![Current Usage tab](docs/assets/current-usage.png)
 
-Shows supported live providers. Configured providers return live quota and balance data; unconfigured ones may show `unavailable` or a local fallback.
+Shows the selected live provider's quota and balance information. Provider data can be `live`, `cached`, `stale`, `local`, or `unavailable`, depending on credentials, refresh state, and provider support.
 
-- Provider selector: `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, `OpenRouter`.
-- Rolling-window quota bars (e.g. `5h`, weekly).
-- Balance-style fields where the provider exposes them.
-- Inline status: `live`, `cached`, `stale`, `local`, `unavailable`.
+- Select `OpenAI/Codex`, `MiniMax`, `StepFun`, `OpenCode Go`, `Command Code`, or `OpenRouter`.
+- View rolling quota windows such as `5h` and weekly limits.
+- View balance-style fields when a provider exposes them.
+- View StepFun's monthly `Credits` usage when its browser session is configured.
 
 ### Insights
 
 ![Insights tab](docs/assets/insights.png)
 
-Shows all-time breakdowns from local Pi session history. Left/Right switches between the available `Projects`, `Skills`, `MCP servers`, and `Cost patterns` categories. Only categories with data appear, and each category keeps its capped list plus overflow summary.
+Shows all-time breakdowns from local Pi session history. Press Left or Right to switch between populated categories:
 
-## Keyboard Shortcuts
+- `Projects`
+- `Skills`
+- `MCP servers`
+- `Cost patterns`
+
+Only categories with data appear. Each category keeps a capped list of rows and shows an overflow summary when more data exists.
+
+## Keyboard shortcuts
 
 Global:
 
-- `[Tab]` next tab.
-- `[Shift-Tab]` previous tab.
-- `[q]` / `[Esc]` close the dashboard.
+- `[Tab]` — next tab.
+- `[Shift-Tab]` — previous tab.
+- `[q]` / `[Esc]` — close the dashboard.
 
-Usage Statistics tab:
+Usage Statistics:
 
-- `[Left/Right]` switch period.
-- `[Up/Down]` move through rows.
-- `[Enter]` / `[Space]` expand or collapse the selected provider row.
+- `[Left/Right]` — switch period.
+- `[Up/Down]` — move through rows.
+- `[Enter]` / `[Space]` — expand or collapse the selected provider row.
 
-Current Usage tab:
+Current Usage:
 
-- `[Left/Right]` switch provider.
+- `[Left/Right]` — switch provider.
 
-Insights tab:
+Insights:
 
-- `[Left/Right]` switch category.
+- `[Left/Right]` — switch category.
 
-The footer at the bottom of the dashboard shows the contextual shortcuts for the active tab.
+The dashboard footer shows shortcuts for the active tab.
 
 ## Configuration
 
 ### `usage.json`
 
-Create `$PI_CODING_AGENT_DIR/extensions/usage.json` to disable specific live providers.
+Create `$PI_CODING_AGENT_DIR/extensions/usage.json` to disable live providers that you do not want queried.
 
 Default behavior:
 
-- File missing: all providers stay enabled.
-- File is `{}`: all providers stay enabled.
-- Provider omitted: that provider stays enabled.
-- JSON malformed: `@pi-vault/pi-usage` ignores it and falls back to the default behavior.
+- Missing file: all providers stay enabled.
+- `{}`: all providers stay enabled.
+- Omitted provider: that provider stays enabled.
+- Malformed JSON: Pi Usage ignores it and uses the default behavior.
 
 Default example:
 
@@ -142,11 +145,11 @@ Disable MiniMax only:
 
 ### Provider setup
 
-Offline history works without extra setup. Provider cards appear for every supported live provider unless you disable them in `usage.json`. Providers you configure can return live data; others may show `unavailable` or a local fallback state.
+Offline history works without provider credentials. All supported live providers appear unless disabled in `usage.json`. Providers without valid credentials may show `unavailable` or a local fallback state.
 
 #### OpenAI/Codex
 
-Pi usage can reuse existing Pi or Codex auth. Optional overrides:
+Pi Usage can reuse existing Pi or Codex authentication. Optional overrides:
 
 - `OPENAI_CODEX_OAUTH_TOKEN`
 - `OPENAI_CODEX_ACCESS_TOKEN`
@@ -168,7 +171,7 @@ Optional override:
 
 #### StepFun
 
-Pi Usage reads Step Plan Credits from your logged-in StepFun Platform browser session.
+Pi Usage reads Step Plan monthly Credits from your logged-in StepFun Platform browser session.
 
 1. Sign in at [platform.stepfun.ai](https://platform.stepfun.ai/).
 2. Open browser DevTools → **Application** → **Storage** → **Cookies** → `https://platform.stepfun.ai`.
@@ -189,7 +192,7 @@ Set:
 - `OPENCODE_GO_COOKIE_HEADER`
 - `OPENCODE_GO_WORKSPACE_ID`
 
-`OPENCODE_GO_WORKSPACE_ID` accepts either the raw `wrk_...` id or the full workspace URL.
+`OPENCODE_GO_WORKSPACE_ID` accepts either the raw `wrk_...` ID or the full workspace URL.
 
 #### Command Code
 
