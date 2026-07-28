@@ -7,6 +7,10 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { PERIOD_ORDER, UI_STRINGS } from "../shared/constants.ts";
+import {
+  USAGE_CORE_UPDATE_CURRENT_EVENT,
+  type UsageCorePayload,
+} from "../shared/events.ts";
 import type {
   AggregatedUsagePeriod,
   AggregatedUsageRow,
@@ -51,7 +55,6 @@ const PERIOD_LABELS: Record<UsageWindow, string> = {
   allTime: "All Time",
 };
 
-const USAGE_CORE_UPDATE_EVENT = "usage-core:update-current";
 const SHIFT_TAB_KEY: "shift+tab" = "shift+tab";
 
 const DEFAULT_PERIOD_INDEX = (() => {
@@ -167,7 +170,7 @@ export class UsageDashboardComponent implements Component {
   private unsubscribeUpdate?: () => void;
 
   constructor(
-    private readonly state: UsageCoreState,
+    private state: UsageCoreState,
     private readonly done: () => void,
     options: UsageDashboardOptions = {},
   ) {
@@ -184,14 +187,16 @@ export class UsageDashboardComponent implements Component {
     // global hook that the index module can populate.
     const bus = pickEventBus(tui);
     if (!bus) return;
-    const handler = () => {
+    const handler = (payload: unknown) => {
+      const update = payload as Partial<UsageCorePayload> | null;
+      if (update?.state) this.state = update.state;
       try {
         tui.requestRender();
       } catch {
         // Render failures must not break the dashboard.
       }
     };
-    const off = bus.on(USAGE_CORE_UPDATE_EVENT, handler);
+    const off = bus.on(USAGE_CORE_UPDATE_CURRENT_EVENT, handler);
     if (typeof off === "function") {
       this.unsubscribeUpdate = off;
     }

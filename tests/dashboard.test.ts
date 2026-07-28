@@ -1086,7 +1086,7 @@ describe("dashboard themed styling", () => {
 });
 
 describe("dashboard repaint subscription", () => {
-  it("calls tui.requestRender when a usage-core:update-current event fires", () => {
+  it("updates rendered state and repaints when usage-core state changes", () => {
     const tui = makeMockTui();
     const unsubscribe = vi.fn();
     const bus = {
@@ -1100,24 +1100,31 @@ describe("dashboard repaint subscription", () => {
     (globalThis as { __piUsageBus?: unknown }).__piUsageBus = bus;
 
     try {
-      new UsageDashboardComponent(mkState(), () => undefined, {
-        theme: noTheme,
-        tui: tui as unknown as TUI,
-      });
+      const initialState = mkState();
+      initialState.loading = true;
+      initialState.offline.periods = [];
+      const component = new UsageDashboardComponent(
+        initialState,
+        () => undefined,
+        {
+          theme: noTheme,
+          tui: tui as unknown as TUI,
+        },
+      );
 
-      bus.handler?.();
+      expect(component.render(80).join("\n")).toContain(
+        "Loading session history...",
+      );
+
+      bus.handler?.({ state: mkState() });
+
+      const output = component.render(80).join("\n");
+      expect(output).not.toContain("Loading session history...");
+      expect(output).toContain("openai-codex");
       expect(tui.requestRender).toHaveBeenCalledTimes(1);
 
-      bus.handler?.();
-      expect(tui.requestRender).toHaveBeenCalledTimes(2);
-
-      // The dashboard's invalidate() must release the listener.
-      const c = new UsageDashboardComponent(mkState(), () => undefined, {
-        theme: noTheme,
-        tui: tui as unknown as TUI,
-      });
-      c.invalidate();
-      expect(unsubscribe).toHaveBeenCalled();
+      component.invalidate();
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
     } finally {
       delete (globalThis as { __piUsageBus?: unknown }).__piUsageBus;
     }
