@@ -79,17 +79,14 @@ describe("StepFun provider", () => {
     }
   });
 
-  it("uses the .ai dashboard with the matching browser Web ID", async () => {
+  it("uses the current .ai browser request contract", async () => {
     const root = mkTmp();
     const calls: string[] = [];
+    const requestHeaders: Headers[] = [];
     const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url, init) => {
       const textUrl = String(url);
       calls.push(textUrl);
-      const headers = new Headers(init?.headers);
-      expect(headers.get("oasis-webid")).toBe("browser-web-id");
-      expect(headers.get("cookie")).toBe(
-        "Oasis-Token=test-token; Oasis-WebId=browser-web-id",
-      );
+      requestHeaders.push(new Headers(init?.headers));
 
       if (textUrl.includes("QueryStepPlanRateLimit")) {
         return new Response(
@@ -129,6 +126,15 @@ describe("StepFun provider", () => {
     expect(
       calls.every((url) => url.startsWith("https://platform.stepfun.ai")),
     ).toBe(true);
+    for (const headers of requestHeaders) {
+      expect(headers.get("connect-protocol-version")).toBe("1");
+      expect(headers.get("oasis-appid")).toBe("20700");
+      expect(headers.get("oasis-platform")).toBe("web");
+      expect(headers.get("oasis-webid")).toBe("browser-web-id");
+      expect(headers.get("cookie")).toBe(
+        "Oasis-Token=test-token; Oasis-Webid=browser-web-id",
+      );
+    }
     rmSync(root, { recursive: true, force: true });
   });
 

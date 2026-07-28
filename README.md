@@ -172,7 +172,7 @@ Pi Usage reads Step Plan Credits from your logged-in StepFun Platform browser se
 
 1. Sign in at [platform.stepfun.ai](https://platform.stepfun.ai/).
 2. Open browser DevTools → **Application** → **Storage** → **Cookies** → `https://platform.stepfun.ai`.
-3. Copy the `Oasis-Token` and `Oasis-WebId` cookie values.
+3. Copy the `Oasis-Token` and `Oasis-Webid` cookie values.
 4. Export them before starting Pi:
 
    ```sh
