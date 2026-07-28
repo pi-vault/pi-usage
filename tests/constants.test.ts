@@ -16,7 +16,7 @@ describe("UI_STRINGS.dashboardFooters", () => {
 
   it("insights footer matches expected format", () => {
     expect(UI_STRINGS.dashboardFooters.insights).toBe(
-      "[Tab/Shift-Tab] Switch tab \u2022 [Left/Right] Period \u2022 [q/Esc] Close",
+      "[Tab/Shift-Tab] Switch tab \u2022 [Left/Right] Category \u2022 [q/Esc] Close",
     );
   });
 });

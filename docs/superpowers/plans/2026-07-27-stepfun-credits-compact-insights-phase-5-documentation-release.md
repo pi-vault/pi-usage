@@ -8,7 +8,7 @@
 
 **Architecture:** This phase changes no runtime behavior. It updates public setup and keyboard guidance, adds an Unreleased changelog entry, captures the compact UI, then runs focused, full, package, and live verification.
 
-**Tech Stack:** Markdown, terminal screenshot tooling, tmux, pnpm, Vitest, Pi 0.82.0.
+**Tech Stack:** Markdown, Herdr, pnpm, Vitest, Pi 0.82.1.
 
 **Phase dependency:** Phases 1–4 are committed and `pnpm check` passes.
 
@@ -112,7 +112,7 @@ Insert:
 
 ### Changed
 
-- Updated `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` to 0.82.0.
+- Updated `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` to 0.82.1.
 - Migrated StepFun Step Plan tracking to `platform.stepfun.ai` browser-session credentials and monthly Credit usage.
 - Replaced the unsupported Insights period selector with compact all-time category navigation.
 
@@ -138,35 +138,40 @@ Expected: exactly one matching line.
 **Files:**
 - Modify: `docs/assets/insights.png`
 
-- [ ] **Step 1: Verify Insights at 40×24**
+- [ ] **Step 1: Verify Insights at 40×24 and 80×24 with Herdr**
 
 ```sh
-tmux new-session -d -s pi-usage-40 -x 40 -y 24
-tmux send-keys -t pi-usage-40 "cd $(pwd) && pi -e ." Enter
-sleep 3
-tmux send-keys -t pi-usage-40 "/usage" Enter
-sleep 2
-tmux capture-pane -t pi-usage-40 -p
-tmux kill-session -t pi-usage-40
+verify_insights() {
+  width="$1"
+  workspace=$(herdr pane current | jq -r '.result.pane.workspace_id')
+  created=$(herdr tab create --workspace "$workspace" --cwd "$(pwd)" --label "verify-$width" --no-focus)
+  pane=$(printf '%s' "$created" | jq -r '.result.root_pane.pane_id')
+  tab=$(printf '%s' "$created" | jq -r '.result.tab.tab_id')
+
+  herdr pane send-text "$pane" "stty rows 24 cols $width; pi -e ."
+  herdr pane send-keys "$pane" enter
+  sleep 4
+  herdr pane send-text "$pane" '/usage:refresh'
+  herdr pane send-keys "$pane" enter
+  sleep 10
+  herdr pane send-keys "$pane" q
+  sleep 1
+  herdr pane send-text "$pane" '/usage'
+  herdr pane send-keys "$pane" enter
+  sleep 2
+  herdr pane send-keys "$pane" tab tab
+  sleep 1
+  herdr pane read "$pane" --source visible --lines 24
+  herdr tab close "$tab" >/dev/null
+}
+
+verify_insights 40
+verify_insights 80
 ```
 
-Expected: category tabs, selected rows, contextual footer, and bottom frame are visible.
+The refresh runs before capture so local Insight data is populated; reopening `/usage` reads the completed scan. Expected: both captures show Insights selected, populated category tabs, one selected category, the contextual Category footer, and the bottom frame. At 80 columns, all available category tabs fit on one row.
 
-- [ ] **Step 2: Verify Insights at 80×24**
-
-```sh
-tmux new-session -d -s pi-usage-80 -x 80 -y 24
-tmux send-keys -t pi-usage-80 "cd $(pwd) && pi -e ." Enter
-sleep 3
-tmux send-keys -t pi-usage-80 "/usage" Enter
-sleep 2
-tmux capture-pane -t pi-usage-80 -p
-tmux kill-session -t pi-usage-80
-```
-
-Expected: all available category tabs fit, one category renders, and the footer and bottom frame remain visible.
-
-- [ ] **Step 3: Verify a real StepFun Credit response**
+- [ ] **Step 2: Verify a real StepFun Credit response**
 
 Start Pi with local `STEPFUN_TOKEN` and `STEPFUN_WEB_ID` values, run `/usage:refresh`, and open Current Usage.
 
@@ -178,9 +183,9 @@ Expected:
 - a subscription reset only when `subscription_credit_reset_time` is present,
 - no token or Web ID in diagnostics, terminal capture, or logs.
 
-- [ ] **Step 4: Refresh the Insights screenshot**
+- [ ] **Step 3: Refresh the Insights screenshot**
 
-At a normal terminal size, open `/usage`, switch to Insights, and select a representative populated category. Replace `docs/assets/insights.png` with a screenshot that shows:
+At a normal terminal size, run `/usage:refresh`, wait for the scan to finish, close the overlay, reopen `/usage`, switch to Insights, and select a representative populated category. Replace `docs/assets/insights.png` with a screenshot that shows:
 
 - the main Insights tab selected,
 - populated category tabs,
@@ -258,7 +263,7 @@ Expected:
 
 - no whitespace errors,
 - no uncommitted implementation or documentation files,
-- separate commits for Pi 0.82.0, StepFun browser sessions, StepFun Credits, compact Insights, and documentation.
+- separate commits for the Pi dependency update, StepFun browser sessions, StepFun Credits, compact Insights, and documentation.
 
 - [ ] **Step 5: Record any unavailable manual evidence**
 

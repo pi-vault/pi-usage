@@ -73,6 +73,21 @@ const DASHBOARD_TABS: DashboardTab[] = [
   { id: "insights", label: UI_STRINGS.dashboardBorderedSectionTitles.insights },
 ];
 
+const INSIGHT_CATEGORIES = [
+  { id: "project", label: "Projects" },
+  { id: "skill", label: "Skills" },
+  { id: "mcp", label: "MCP servers" },
+  { id: "cost", label: "Cost patterns" },
+] as const;
+
+type InsightCategoryId = (typeof INSIGHT_CATEGORIES)[number]["id"];
+
+type AvailableInsightCategory = {
+  id: InsightCategoryId;
+  label: string;
+  items: UsageCoreState["insights"];
+};
+
 function normalizePlan(provider: ProviderUsageSnapshot): string | undefined {
   const raw = provider.planName?.trim();
   if (!raw) return undefined;
@@ -143,7 +158,7 @@ export interface UsageDashboardOptions {
 export class UsageDashboardComponent implements Component {
   private activeTab: DashboardTabId = "statistics";
   private periodIndex = DEFAULT_PERIOD_INDEX;
-  private insightsPeriodIndex = DEFAULT_PERIOD_INDEX;
+  private insightsCategory: InsightCategoryId = "project";
   private rowIndex = 0;
   private expandedProvider: string | null = null;
   private currentUsageProviderIndex: number;
@@ -387,76 +402,74 @@ export class UsageDashboardComponent implements Component {
     lines.push(...this.renderLegend(w));
   }
 
-  private renderInsightsByCategory(_w: number): string[] {
+  private availableInsightCategories(): AvailableInsightCategory[] {
+    return INSIGHT_CATEGORIES.map((category) => ({
+      ...category,
+      items: this.state.insights.filter(
+        (item) => (item.category ?? "cost") === category.id,
+      ),
+    })).filter((category) => category.items.length > 0);
+  }
+
+  private activeInsightCategory(
+    categories: AvailableInsightCategory[],
+  ): AvailableInsightCategory | undefined {
+    const active =
+      categories.find((category) => category.id === this.insightsCategory) ??
+      categories[0];
+    if (active) this.insightsCategory = active.id;
+    return active;
+  }
+
+  private renderInsightCategory(category: AvailableInsightCategory): string[] {
     const lines: string[] = [];
-    const categoryOrder = ["project", "skill", "mcp", "cost"];
-    const categoryLabels: Record<string, string> = {
-      project: "Projects",
-      skill: "Skills",
-      mcp: "MCP servers",
-      cost: "Cost patterns",
-    };
-
-    const grouped = new Map<string, typeof this.state.insights>();
-    for (const item of this.state.insights) {
-      const cat = item.category ?? "cost";
-      const list = grouped.get(cat) ?? [];
-      list.push(item);
-      grouped.set(cat, list);
-    }
-
-    for (const cat of categoryOrder) {
-      const items = grouped.get(cat);
-      if (!items || items.length === 0) continue;
-      lines.push("");
-      const header = categoryLabels[cat] ?? cat;
-      if (cat === "cost") {
-        lines.push(this.theme.dim(header));
-        for (const item of items) {
-          lines.push(
-            this.theme.dim(
-              `  - ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`,
-            ),
-          );
-        }
-      } else {
-        const pctHeader = "% of usage";
-        const maxLabelLen = Math.max(
-          ...items.map((i) => i.label.length),
-          header.length,
+    if (category.id === "cost") {
+      lines.push(this.theme.dim(category.label));
+      for (const item of category.items) {
+        lines.push(
+          this.theme.dim(
+            `  - ${item.label}: ${formatCurrency(item.cost)} (${item.detail})`,
+          ),
         );
-        const headerLine = `  ${padVisible(this.theme.dim(header), maxLabelLen + 2, "left")}  ${this.theme.dim(pctHeader)}`;
-        lines.push(headerLine);
-        for (const item of items) {
-          const label = padVisible(
-            this.theme.dim(item.label),
-            maxLabelLen + 2,
-            "left",
-          );
-          lines.push(`  ${label}  ${this.theme.dim(item.detail)}`);
-        }
       }
+      return lines;
     }
 
+    const maxLabelLen = Math.max(
+      ...category.items.map((item) => item.label.length),
+      category.label.length,
+    );
+    lines.push(
+      `  ${padVisible(this.theme.dim(category.label), maxLabelLen + 2, "left")}  ${this.theme.dim("% of usage")}`,
+    );
+    for (const item of category.items) {
+      const label = padVisible(
+        this.theme.dim(item.label),
+        maxLabelLen + 2,
+        "left",
+      );
+      lines.push(`  ${label}  ${this.theme.dim(item.detail)}`);
+    }
     return lines;
   }
 
   private renderInsightsTab(w: number, lines: string[]): void {
+    const categories = this.availableInsightCategories();
+    const active = this.activeInsightCategory(categories);
+    if (!active) {
+      lines.push(this.theme.dim("No insights yet."));
+      return;
+    }
+
     lines.push(
       ...this.renderTabs(
-        PERIODS.map((period) => PERIOD_LABELS[period]),
-        this.insightsPeriodIndex,
+        categories.map((category) => category.label),
+        categories.indexOf(active),
         w,
       ),
     );
     lines.push("");
-
-    // TODO: filter insights by period when backend supports per-period data
-    if (this.state.insights.length === 0) {
-      lines.push(this.theme.dim("No insights yet."));
-    } else {
-      lines.push(...this.renderInsightsByCategory(w));
-    }
+    lines.push(...this.renderInsightCategory(active));
   }
 
   private renderCurrentUsageTab(w: number, lines: string[]): void {
@@ -633,10 +646,14 @@ export class UsageDashboardComponent implements Component {
       : matchesKey(data, Key.right)
         ? 1
         : 0;
-    if (delta) {
-      this.insightsPeriodIndex =
-        (this.insightsPeriodIndex + delta + PERIODS.length) % PERIODS.length;
-    }
+    if (!delta) return;
+
+    const categories = this.availableInsightCategories();
+    const active = this.activeInsightCategory(categories);
+    if (!active) return;
+    const index = categories.indexOf(active);
+    this.insightsCategory =
+      categories[(index + delta + categories.length) % categories.length].id;
   }
 
   handleInput(data: string): void {

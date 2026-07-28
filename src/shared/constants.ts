@@ -60,7 +60,7 @@ export const UI_STRINGS = {
     ].join(" • "),
     insights: [
       "[Tab/Shift-Tab] Switch tab",
-      "[Left/Right] Period",
+      "[Left/Right] Category",
       "[q/Esc] Close",
     ].join(" • "),
   },
