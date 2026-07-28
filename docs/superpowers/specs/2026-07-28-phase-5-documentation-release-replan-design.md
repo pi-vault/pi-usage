@@ -4,11 +4,12 @@
 
 Phase 5 must document the merged StepFun Credits and compact Insights behavior, replace the obsolete Insights screenshot, and establish release readiness without accidentally testing an installed package or accepting incomplete evidence.
 
-The current Phase 5 plan has four execution defects:
+The current Phase 5 plan has five execution defects:
 
 - `pi -e .` also loads enabled user extensions, including the installed `@pi-vault/pi-usage`, so the global initialization guard can cause the checkout under test to be skipped.
 - `pnpm test -- tests/provider-stepfun.test.ts` passes a literal `--` to Vitest and runs all test files instead of the intended focused set.
 - fixed sleeps followed by `q` can cancel an unfinished offline scan, producing stale or incomplete Insights evidence.
+- the dashboard receives a cloned initial state and its update listener only requests a repaint, so async scan results never replace the state rendered by the open overlay.
 - `git log -5` cannot show all phase commits because Phase 4 contains follow-up commits and merge commits.
 
 ## Current baseline
@@ -28,12 +29,22 @@ The local Pi reference repository at `/Users/lanh/Developer/pi-packages/pi` conf
 
 Modify only:
 
+- `src/tui/dashboard.ts`
+- `tests/dashboard.test.ts`
 - `README.md`
 - `CHANGELOG.md`
 - `docs/assets/insights.png`
 - the existing Phase 5 implementation plan
 
-Do not change runtime code, tests, dependencies, package version, provider behavior, Insights calculations, or overlay options.
+Do not change dependencies, package version, provider behavior, Insights calculations, or overlay options.
+
+## Runtime prerequisite
+
+The dashboard update listener will accept the internal `UsageCorePayload`, replace its stored state when the payload contains a state, and then request a repaint. The component's state field therefore becomes mutable while the input payload remains the structured clone produced by the core event boundary.
+
+A focused dashboard test will begin with `loading: true`, emit an update containing completed state, and assert that a subsequent render removes `Loading session history...`, shows the updated usage rows, and requests a repaint. Existing listener cleanup behavior remains covered.
+
+This is the minimum release fix: no new event channel, state store, polling API, or scan orchestration change.
 
 ## Documentation behavior
 
@@ -103,6 +114,7 @@ The package listing must include `src`, `docs/assets`, `README.md`, `CHANGELOG.m
 
 Phase 5 is complete only when:
 
+- an open dashboard renders state delivered by the usage-core update event;
 - README and changelog claims match the implementation and dependency metadata;
 - the screenshot shows the compact category UI and passes privacy review;
 - isolated 40 by 24 and 80 by 24 captures pass;
