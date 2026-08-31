@@ -1,6 +1,6 @@
 {
   "name": "@pi-vault/pi-usage",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "description": "Pi extension that tracks Pi usage across your sessions in one dashboard",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
@@ -48,13 +48,13 @@
     "README.md"
   ],
   "devDependencies": {
-    "@biomejs/biome": "^2.5.5",
-    "@earendil-works/pi-coding-agent": "^0.82.0",
-    "@earendil-works/pi-tui": "^0.82.0",
-    "@types/node": "^26.1.0",
-    "typebox": "^1.3.3",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "@biomejs/biome": "^2.5.11",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
+    "@types/node": "^26.4.0",
+    "typebox": "^1.3.22",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
