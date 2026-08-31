@@ -16,13 +16,12 @@ Reference: <https://commandcode.ai/docs/resources/usage-limits>
 
 ## Architecture
 
-Replace the single `src/providers/command-code.ts` file with three modules:
+Keep the existing provider entrypoint and the Phase 1 parser as two focused modules:
 
-- `src/providers/command-code/index.ts` owns provider orchestration, cache-runtime integration, and final error classification.
-- `src/providers/command-code/api-client.ts` owns cookie normalization, request headers, concurrent endpoint fetching, response decoding, and endpoint diagnostics.
+- `src/providers/command-code.ts` owns cookie normalization, concurrent endpoint fetching, response diagnostics, cache-runtime integration, and final error classification.
 - `src/providers/command-code/usage-parser.ts` is a pure payload parser that returns rolling windows, balances, and the display plan name.
 
-The provider registry imports the new directory entrypoint. No public exports, shared types, configuration keys, dependencies, or TUI code change.
+Wire the parser into the existing provider instead of adding a single-consumer API-client module. The provider registry remains unchanged. Add the current `commandcode_prod_` host and non-secure cookie-name variants observed in CodexBar while preserving all existing accepted cookie forms. No public exports, shared types, configuration keys, dependencies, or TUI code change.
 
 ## Usage Semantics
 
@@ -47,4 +46,4 @@ Publish a live snapshot whenever parsing yields at least one window or balance, 
 
 Extend the existing Command Code tests with pure parser coverage for both payload locations, value coercion, reset formats, invalid caps, percentage clamping, window ordering, the absence of a synthesized monthly window, balance preservation, token precedence, and plan names. Preserve the cookie, subscription-enrichment, and partial-failure integration coverage.
 
-Run the focused provider test and then the complete project check on Node.js `>=24.15.0`.
+The provider integration must assert rolling windows, monthly and purchased balances, request and token balances, plan enrichment, supported cookie aliases, primary rate-limit handling, and expired-session handling. Run the focused provider test and then the complete project check on Node.js `>=24.15.0`; a pass on an unsupported Node.js version is not sufficient completion evidence.

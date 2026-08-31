@@ -1,16 +1,12 @@
 import { PROVIDER_LABELS, PROVIDER_TTLS_MS } from "../shared/constants.ts";
 import type { UsageDeps } from "../shared/deps.ts";
-import type {
-  LiveUsageWindow,
-  ProviderUsageSnapshot,
-  UsageProviderAdapter,
-} from "../shared/types.ts";
+import type { UsageProviderAdapter } from "../shared/types.ts";
+import { parseCommandCodeUsage } from "./command-code/usage-parser.ts";
 import {
   fetchWithLiveRuntime,
   fetchWithTimeout,
   readJsonObject,
   retryAfterMs,
-  toFinite,
 } from "./runtime.ts";
 
 function normalizeCookieHeader(raw: string | undefined): string | undefined {
@@ -19,6 +15,8 @@ function normalizeCookieHeader(raw: string | undefined): string | undefined {
   const bare = input.replace(/^cookie\s*:\s*/i, "").trim();
   const cookieNames = [
     "__Secure-commandcode_prod_.session_token",
+    "commandcode_prod_.session_token",
+    "__Host-commandcode_prod_.session_token",
     "__Host-better-auth.session_token",
     "__Secure-better-auth.session_token",
     "better-auth.session_token",
@@ -41,12 +39,6 @@ function normalizeCookieHeader(raw: string | undefined): string | undefined {
     return `__Secure-commandcode_prod_.session_token=${parts[0]}`;
   }
   return undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 export function createCommandCodeProvider(
@@ -136,110 +128,13 @@ export function createCommandCodeProvider(
             const creditsPayload = await readJson(creditsRes, "Credits");
             const subsPayload = await readJson(subsRes, "Subscription");
 
-            const totalCost = toFinite(summary?.totalCost);
-            const totalCount = toFinite(summary?.totalCount);
-            const totalTokens = toFinite(summary?.totalTokens);
-            const totalTokensIn = toFinite(summary?.totalTokensIn);
-            const totalTokensOut = toFinite(summary?.totalTokensOut);
+            const parsed = parseCommandCodeUsage({
+              summary,
+              credits: creditsPayload,
+              subscription: subsPayload,
+            });
 
-            const credits = asRecord(creditsPayload?.credits);
-            const monthlyCredits = toFinite(credits?.monthlyCredits);
-            const purchasedCredits = toFinite(credits?.purchasedCredits) ?? 0;
-
-            const subsData = asRecord(subsPayload?.data);
-            const planId =
-              typeof subsData?.planId === "string"
-                ? subsData.planId
-                : undefined;
-            const planName =
-              planId === "individual-go"
-                ? "Go"
-                : planId === "individual-pro"
-                  ? "Pro"
-                  : planId === "individual-max"
-                    ? "Max"
-                    : planId === "individual-ultra"
-                      ? "Ultra"
-                      : planId;
-            const resetAt =
-              typeof subsData?.currentPeriodEnd === "string"
-                ? Date.parse(subsData.currentPeriodEnd)
-                : undefined;
-
-            const windows: LiveUsageWindow[] = [];
-            if (totalCost != null && monthlyCredits != null) {
-              const remaining = monthlyCredits + purchasedCredits;
-              const limit = totalCost + remaining;
-              windows.push({
-                key: "current-cycle",
-                label: "Current cycle",
-                used: totalCost,
-                limit,
-                unit: "USD",
-                usedPercent:
-                  limit > 0 ? Math.round((totalCost / limit) * 100) : 0,
-                resetAt: Number.isFinite(resetAt) ? resetAt : undefined,
-              });
-            } else if (totalCost != null) {
-              windows.push({
-                key: "current-cycle-used",
-                label: "Current cycle",
-                used: totalCost,
-                unit: "USD",
-                usedPercent: 0,
-                unavailableReason: "Remaining balance unavailable",
-              });
-            } else if (monthlyCredits != null) {
-              windows.push({
-                key: "current-cycle-remaining",
-                label: "Current cycle",
-                unit: "USD",
-                usedPercent: 0,
-                unavailableReason: "Consumed cost unavailable",
-              });
-            }
-
-            const balances = [] as ProviderUsageSnapshot["balances"];
-            if (monthlyCredits != null)
-              balances.push({
-                label: "Monthly remaining",
-                remaining: monthlyCredits,
-                unit: "USD",
-              });
-            if (purchasedCredits > 0)
-              balances.push({
-                label: "Purchased remaining",
-                remaining: purchasedCredits,
-                unit: "USD",
-              });
-            if (totalCount != null)
-              balances.push({
-                label: "Requests",
-                remaining: totalCount,
-                unit: "count",
-              });
-            if (totalTokens != null) {
-              balances.push({
-                label: "Tokens",
-                remaining: totalTokens,
-                unit: "tok",
-              });
-            } else if (totalTokensIn != null || totalTokensOut != null) {
-              if (totalTokensIn != null)
-                balances.push({
-                  label: "Tokens in",
-                  remaining: totalTokensIn,
-                  unit: "tok",
-                });
-              if (totalTokensOut != null)
-                balances.push({
-                  label: "Tokens out",
-                  remaining: totalTokensOut,
-                  unit: "tok",
-                });
-            }
-
-            if (windows.length === 0 && balances.length === 0) {
+            if (parsed.windows.length === 0 && parsed.balances.length === 0) {
               const primaryResponses = [summaryRes, creditsRes].filter(
                 (res): res is Response => Boolean(res),
               );
@@ -279,13 +174,11 @@ export function createCommandCodeProvider(
                 diagnostic: "",
                 fetchedAt: now,
                 expiresAt: now + PROVIDER_TTLS_MS["command-code"],
-                balances,
                 status: "live",
                 sourceLabel: "Command Code web usage API",
                 sourceKind: "live",
-                windows,
                 diagnostics,
-                planName,
+                ...parsed,
               },
             };
           },
