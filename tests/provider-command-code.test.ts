@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createDefaultDeps, type UsageDeps } from "../src/shared/deps.ts";
 import { createProviderRegistry } from "../src/providers/index.ts";
+import { parseCommandCodeUsage } from "../src/providers/command-code/usage-parser.ts";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "pi-usage-live-"));
@@ -32,6 +33,135 @@ function commandCodeProvider(deps: UsageDeps) {
   if (!provider) throw new Error("missing command-code provider");
   return provider;
 }
+
+describe("Command Code usage parser", () => {
+  it("parses root rolling windows and preserves balances without a monthly window", () => {
+    const parsed = parseCommandCodeUsage({
+      summary: { totalCost: 4, totalCount: 42, totalTokens: 1_234 },
+      credits: {
+        credits: { monthlyCredits: 6, purchasedCredits: 5 },
+        windowLimits: {
+          fiveHour: { cap: 3, used: 0.75, resetAt: 1_780_000_000_000 },
+          weekly: { cap: 15, used: 1.5, resetAt: 1_780_100_000_000 },
+        },
+      },
+      subscription: { data: { planId: "individual-go" } },
+    });
+
+    expect(parsed.windows).toEqual([
+      {
+        key: "fiveHour",
+        label: "5h",
+        usedPercent: 25,
+        resetAt: 1_780_000_000_000,
+        windowDurationMins: 300,
+      },
+      {
+        key: "weekly",
+        label: "Weekly",
+        usedPercent: 10,
+        resetAt: 1_780_100_000_000,
+        windowDurationMins: 10_080,
+      },
+    ]);
+    expect(parsed.windows.some((window) => window.key === "monthly")).toBe(
+      false,
+    );
+    expect(parsed.balances).toEqual([
+      { label: "Monthly remaining", remaining: 6, unit: "USD" },
+      { label: "Purchased remaining", remaining: 5, unit: "USD" },
+      { label: "Requests", remaining: 42, unit: "count" },
+      { label: "Tokens", remaining: 1_234, unit: "tok" },
+    ]);
+    expect(parsed.planName).toBe("Go");
+  });
+
+  it("parses nested string windows and supported reset formats", () => {
+    const parsed = parseCommandCodeUsage({
+      credits: {
+        credits: {
+          monthlyCredits: "7.25",
+          windowLimits: {
+            fiveHour: { cap: "4", used: "1", resetAt: "1780200000" },
+            weekly: {
+              cap: "20",
+              used: "4",
+              resetAt: "2026-06-01T00:00:00Z",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.windows.map((window) => window.usedPercent)).toEqual([25, 20]);
+    expect(parsed.windows[0].resetAt).toBe(1_780_200_000_000);
+    expect(parsed.windows[1].resetAt).toBe(Date.parse("2026-06-01T00:00:00Z"));
+    expect(parsed.balances).toContainEqual({
+      label: "Monthly remaining",
+      remaining: 7.25,
+      unit: "USD",
+    });
+  });
+
+  it("omits invalid caps, defaults missing usage, and clamps overuse", () => {
+    const parsed = parseCommandCodeUsage({
+      credits: {
+        credits: {},
+        windowLimits: {
+          fiveHour: { cap: 3 },
+          weekly: { cap: 0, used: 2 },
+        },
+      },
+    });
+    expect(parsed.windows).toEqual([
+      {
+        key: "fiveHour",
+        label: "5h",
+        usedPercent: 0,
+        resetAt: undefined,
+        windowDurationMins: 300,
+      },
+    ]);
+
+    const overused = parseCommandCodeUsage({
+      credits: {
+        credits: {},
+        windowLimits: { fiveHour: { cap: 3, used: 4 } },
+      },
+    });
+    expect(overused.windows[0].usedPercent).toBe(100);
+  });
+
+  it("uses combined tokens before separate input and output totals", () => {
+    expect(
+      parseCommandCodeUsage({
+        summary: { totalTokens: 30, totalTokensIn: 10, totalTokensOut: 20 },
+      }).balances,
+    ).toEqual([{ label: "Tokens", remaining: 30, unit: "tok" }]);
+    expect(
+      parseCommandCodeUsage({
+        summary: { totalTokensIn: 10, totalTokensOut: 20 },
+      }).balances,
+    ).toEqual([
+      { label: "Tokens in", remaining: 10, unit: "tok" },
+      { label: "Tokens out", remaining: 20, unit: "tok" },
+    ]);
+  });
+
+  it.each([
+    ["individual-go", "Go"],
+    ["individual-goat", "GOAT"],
+    ["individual-pro", "Pro"],
+    ["individual-pro-v1", "Pro"],
+    ["individual-max", "Max"],
+    ["individual-ultra", "Ultra"],
+    ["team-future", "team-future"],
+  ])("maps plan %s to %s", (planId, expected) => {
+    expect(
+      parseCommandCodeUsage({ subscription: { data: { planId } } }).planName,
+    ).toBe(expected);
+  });
+});
 
 describe("Command Code provider", () => {
   it("uses cookie auth and parses aggregate usage", async () => {
