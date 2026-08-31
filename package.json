@@ -1,6 +1,6 @@
 {
   "name": "@pi-vault/pi-usage",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "description": "Pi extension that tracks Pi usage across your sessions in one dashboard",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
