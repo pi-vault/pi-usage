@@ -198,7 +198,7 @@ describe("Command Code usage parser", () => {
 });
 
 describe("Command Code provider", () => {
-  it("uses cookie auth and parses aggregate usage", async () => {
+  it("uses cookie auth and exposes rolling usage with balances", async () => {
     const root = mkTmp();
     const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url, init) => {
       const headers = new Headers(init?.headers);
@@ -206,7 +206,6 @@ describe("Command Code provider", () => {
       if (url.toString().includes("/usage/summary")) {
         return new Response(
           JSON.stringify({
-            totalCost: 4.2888,
             totalCount: 42,
             totalTokens: 1234,
           }),
@@ -216,7 +215,11 @@ describe("Command Code provider", () => {
       if (url.toString().includes("/billing/credits")) {
         return new Response(
           JSON.stringify({
-            credits: { monthlyCredits: 5.7112, purchasedCredits: 0 },
+            credits: { monthlyCredits: 5.7112, purchasedCredits: 5 },
+            windowLimits: {
+              fiveHour: { cap: 3, used: 0.75, resetAt: 1_780_000_000_000 },
+              weekly: { cap: 15, used: 1.5, resetAt: 1_780_100_000_000 },
+            },
           }),
           { status: 200 },
         );
@@ -241,11 +244,21 @@ describe("Command Code provider", () => {
       ).fetch()
     ).snapshot;
     expect(snapshot.status).toBe("live");
+    expect(snapshot.windows.map((window) => [window.key, window.label])).toEqual([
+      ["fiveHour", "5h"],
+      ["weekly", "Weekly"],
+    ]);
+    expect(snapshot.balances).toEqual(
+      expect.arrayContaining([
+        { label: "Monthly remaining", remaining: 5.7112, unit: "USD" },
+        { label: "Purchased remaining", remaining: 5, unit: "USD" },
+        { label: "Requests", remaining: 42, unit: "count" },
+        { label: "Tokens", remaining: 1_234, unit: "tok" },
+      ]),
+    );
     expect(snapshot.planName).toBe("Go");
-    expect(snapshot.windows[0].key).toBe("current-cycle");
-    expect(snapshot.windows[0].label).toBe("Current cycle");
-    expect(snapshot.windows[0].limit).toBeCloseTo(10);
     expect(snapshot.sourceLabel).toContain("Command Code");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -258,18 +271,22 @@ describe("Command Code provider", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("keeps aggregate usage when subscription enrichment fails", async () => {
+  it("keeps rolling limits when summary and subscription fail", async () => {
     const root = mkTmp();
     const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url) => {
-      if (url.toString().includes("/usage/summary")) {
-        return new Response(JSON.stringify({ totalCost: 4, totalCount: 2 }), {
-          status: 200,
-        });
-      }
       if (url.toString().includes("/billing/credits")) {
-        return new Response(JSON.stringify({ credits: { monthlyCredits: 6 } }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            credits: { monthlyCredits: 6 },
+            windowLimits: {
+              fiveHour: { cap: 3, used: 1, resetAt: 1_780_000_000_000 },
+              weekly: { cap: 15, used: 2, resetAt: 1_780_100_000_000 },
+            },
+          }),
+          { status: 200 },
+        );
       }
-      throw new Error("subscription endpoint unavailable");
+      throw new Error("endpoint unavailable");
     });
 
     const snapshot = (
@@ -280,11 +297,76 @@ describe("Command Code provider", () => {
       ).fetch()
     ).snapshot;
     expect(snapshot.status).toBe("live");
-    expect(snapshot.windows[0].limit).toBe(10);
-    expect(snapshot.planName).toBeUndefined();
-    expect(snapshot.diagnostics).toContain("Subscription endpoint unavailable.");
+    expect(snapshot.windows.map((window) => window.key)).toEqual([
+      "fiveHour",
+      "weekly",
+    ]);
+    expect(snapshot.balances).toContainEqual({
+      label: "Monthly remaining",
+      remaining: 6,
+      unit: "USD",
+    });
+    expect(snapshot.diagnostics).toEqual(
+      expect.arrayContaining([
+        "Summary endpoint unavailable.",
+        "Subscription endpoint unavailable.",
+      ]),
+    );
     rmSync(root, { recursive: true, force: true });
   });
+
+  it.each([
+    "commandcode_prod_.session_token",
+    "__Host-commandcode_prod_.session_token",
+  ])("accepts current Command Code cookie alias %s", async (cookieName) => {
+    const root = mkTmp();
+    const fetchImpl = vi.fn<UsageDeps["fetch"]>(async (url, init) => {
+      expect(new Headers(init?.headers).get("cookie")).toBe(
+        `${cookieName}=token`,
+      );
+      if (url.toString().includes("/billing/credits")) {
+        return new Response(
+          JSON.stringify({ credits: { monthlyCredits: 0 } }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const snapshot = (
+      await commandCodeProvider(
+        createLiveDeps(root, () => 1_000, fetchImpl, {
+          COMMAND_CODE_COOKIE_HEADER: `${cookieName}=token`,
+        }),
+      ).fetch()
+    ).snapshot;
+    expect(snapshot.status).toBe("live");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    { status: 429, diagnostic: "Rate limited.", hasRetry: true },
+    { status: 401, diagnostic: "session expired", hasRetry: false },
+  ])(
+    "classifies primary $status responses",
+    async ({ status, diagnostic, hasRetry }) => {
+      const root = mkTmp();
+      const fetchImpl = vi.fn<UsageDeps["fetch"]>(async () =>
+        new Response("{}", { status }),
+      );
+      const outcome = await commandCodeProvider(
+        createLiveDeps(root, () => 1_000, fetchImpl, {
+          COMMAND_CODE_COOKIE_HEADER: "abc",
+        }),
+      ).fetch();
+
+      expect(outcome.snapshot.available).toBe(false);
+      expect(outcome.snapshot.diagnostics.join(" ")).toContain(diagnostic);
+      expect(Boolean(outcome.nextRetryAt)).toBe(hasRetry);
+      rmSync(root, { recursive: true, force: true });
+    },
+  );
 
   it("distinguishes malformed cookie configuration", async () => {
     const root = mkTmp();
