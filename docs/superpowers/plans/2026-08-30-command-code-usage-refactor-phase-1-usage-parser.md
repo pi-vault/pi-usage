@@ -4,7 +4,7 @@
 
 **Goal:** Build and verify the pure Command Code payload parser that Phase 2 will connect to the live provider.
 
-**Architecture:** Add a provider-local pure parser with no network or cache responsibilities. Direct unit tests define rolling-window, monthly-credit, timestamp, balance, and plan-name behavior while the existing live adapter remains unchanged.
+**Architecture:** Add one provider-local pure parser with no network or cache responsibilities. It emits only reliable 5-hour and weekly percentages/reset timing, preserves existing balances and plan names, and deliberately does not synthesize a monthly window from unrelated API values. The existing live adapter remains unchanged in this phase.
 
 **Tech Stack:** TypeScript 6, Node.js `>=24.15.0`, native Fetch API, Vitest 4, pnpm 11, Biome.
 
@@ -19,8 +19,10 @@
 - Change only `pi-usage`; `/Users/lanh/Developer/pi-packages/pi` and `/Users/lanh/Developer/pi-packages/codexbar` are read-only references.
 - Keep Node.js support at `>=24.15.0`.
 - Add no dependencies, public exports, shared usage types, environment variables, local estimates, or static plan-price catalog.
-- Preserve the existing `COMMAND_CODE_COOKIE_HEADER` configuration, provider cache/backoff behavior, request/token balances, and partial-success behavior.
-- Purchased credits remain a balance and never increase the monthly included-credit limit.
+- Preserve the existing monthly and purchased USD balances, request/token balances, and plan-name behavior.
+- Do not synthesize a monthly window from `summary.totalCost` and `credits.monthlyCredits`.
+- Rolling windows expose percentage and reset timing only; do not expose raw `used`, `limit`, or `unit` fields.
+- Do not modify the live provider or registry in Phase 1.
 
 ---
 
@@ -43,17 +45,12 @@ export interface CommandCodePayloads {
   subscription?: Record<string, unknown>;
 }
 
-export type ParsedCommandCodeUsage = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "balances" | "planName"
->;
-
 export function parseCommandCodeUsage(
   payloads: CommandCodePayloads,
-): ParsedCommandCodeUsage;
+): Pick<ProviderUsageSnapshot, "windows" | "balances" | "planName">;
 ```
 
-- [ ] **Step 1: Add failing tests for root-level rolling windows and monthly usage**
+- [ ] **Step 1: Add the failing root-payload parser test**
 
 Add this import to `tests/provider-command-code.test.ts`:
 
@@ -61,13 +58,13 @@ Add this import to `tests/provider-command-code.test.ts`:
 import { parseCommandCodeUsage } from "../src/providers/command-code/usage-parser.ts";
 ```
 
-Add a parser-focused describe block before the existing provider describe block:
+Add this block before the existing provider tests:
 
 ```ts
 describe("Command Code usage parser", () => {
-  it("parses rolling windows at the response root before monthly usage", () => {
+  it("parses root rolling windows and preserves balances without a monthly window", () => {
     const parsed = parseCommandCodeUsage({
-      summary: { totalCost: 4 },
+      summary: { totalCost: 4, totalCount: 42, totalTokens: 1_234 },
       credits: {
         credits: { monthlyCredits: 6, purchasedCredits: 5 },
         windowLimits: {
@@ -75,44 +72,31 @@ describe("Command Code usage parser", () => {
           weekly: { cap: 15, used: 1.5, resetAt: 1_780_100_000_000 },
         },
       },
-      subscription: {
-        data: {
-          planId: "individual-go",
-          currentPeriodEnd: "2026-06-01T00:00:00Z",
-        },
-      },
+      subscription: { data: { planId: "individual-go" } },
     });
 
-    expect(parsed.windows.map((window) => [window.key, window.label])).toEqual([
-      ["fiveHour", "5h"],
-      ["weekly", "Weekly"],
-      ["monthly", "Monthly"],
+    expect(parsed.windows).toEqual([
+      {
+        key: "fiveHour",
+        label: "5h",
+        usedPercent: 25,
+        resetAt: 1_780_000_000_000,
+        windowDurationMins: 300,
+      },
+      {
+        key: "weekly",
+        label: "Weekly",
+        usedPercent: 10,
+        resetAt: 1_780_100_000_000,
+        windowDurationMins: 10_080,
+      },
     ]);
-    expect(parsed.windows[0]).toMatchObject({
-      used: 0.75,
-      limit: 3,
-      usedPercent: 25,
-      unit: "USD",
-      resetAt: 1_780_000_000_000,
-      windowDurationMins: 300,
-    });
-    expect(parsed.windows[1]).toMatchObject({
-      used: 1.5,
-      limit: 15,
-      usedPercent: 10,
-      windowDurationMins: 10_080,
-    });
-    expect(parsed.windows[2]).toMatchObject({
-      used: 4,
-      limit: 10,
-      usedPercent: 40,
-      resetAt: Date.parse("2026-06-01T00:00:00Z"),
-    });
-    expect(parsed.balances).toContainEqual({
-      label: "Purchased remaining",
-      remaining: 5,
-      unit: "USD",
-    });
+    expect(parsed.balances).toEqual([
+      { label: "Monthly remaining", remaining: 6, unit: "USD" },
+      { label: "Purchased remaining", remaining: 5, unit: "USD" },
+      { label: "Requests", remaining: 42, unit: "count" },
+      { label: "Tokens", remaining: 1_234, unit: "tok" },
+    ]);
     expect(parsed.planName).toBe("Go");
   });
 });
@@ -128,9 +112,9 @@ pnpm exec vitest run tests/provider-command-code.test.ts
 
 Expected: FAIL because `src/providers/command-code/usage-parser.ts` does not exist.
 
-- [ ] **Step 3: Implement the parser contract and three-window mapping**
+- [ ] **Step 3: Implement the parser**
 
-Create `src/providers/command-code/usage-parser.ts` with these imports and helpers:
+Create `src/providers/command-code/usage-parser.ts` with this complete implementation:
 
 ```ts
 import type {
@@ -145,25 +129,6 @@ export interface CommandCodePayloads {
   subscription?: Record<string, unknown>;
 }
 
-export type ParsedCommandCodeUsage = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "balances" | "planName"
->;
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function parseTimestamp(value: unknown): number | undefined {
-  const epoch = parseEpochMs(value);
-  if (epoch != null) return epoch;
-  if (typeof value !== "string") return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 const PLAN_NAMES: Record<string, string> = {
   "individual-go": "Go",
   "individual-goat": "GOAT",
@@ -173,6 +138,24 @@ const PLAN_NAMES: Record<string, string> = {
   "individual-ultra": "Ultra",
 };
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function strictFinite(value: unknown): number | undefined {
+  return typeof value === "string" && !value.trim() ? undefined : toFinite(value);
+}
+
+function parseTimestamp(value: unknown): number | undefined {
+  const numeric = strictFinite(value);
+  if (numeric != null) return numeric > 0 ? parseEpochMs(numeric) : undefined;
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function parseRateWindow(
   value: unknown,
   key: string,
@@ -180,28 +163,21 @@ function parseRateWindow(
   windowDurationMins: number,
 ): LiveUsageWindow | undefined {
   const record = asRecord(value);
-  const limit = toFinite(record?.cap);
+  const limit = strictFinite(record?.cap);
   if (limit == null || limit <= 0) return undefined;
-  const used = toFinite(record?.used) ?? 0;
+  const used = strictFinite(record?.used) ?? 0;
   return {
     key,
     label,
-    used,
-    limit,
-    unit: "USD",
     usedPercent: clampPercent((used / limit) * 100),
     resetAt: parseTimestamp(record?.resetAt),
     windowDurationMins,
   };
 }
-```
 
-Implement `parseCommandCodeUsage()` with the exact data rules below:
-
-```ts
 export function parseCommandCodeUsage(
   payloads: CommandCodePayloads,
-): ParsedCommandCodeUsage {
+): Pick<ProviderUsageSnapshot, "windows" | "balances" | "planName"> {
   const credits = asRecord(payloads.credits?.credits);
   const windowLimits =
     asRecord(payloads.credits?.windowLimits) ?? asRecord(credits?.windowLimits);
@@ -223,42 +199,9 @@ export function parseCommandCodeUsage(
   if (fiveHour) windows.push(fiveHour);
   if (weekly) windows.push(weekly);
 
-  const totalCost = toFinite(payloads.summary?.totalCost);
-  const monthlyCredits = toFinite(credits?.monthlyCredits);
-  const purchasedCredits = toFinite(credits?.purchasedCredits) ?? 0;
-  const monthlyResetAt = parseTimestamp(subscription?.currentPeriodEnd);
-
-  if (totalCost != null && monthlyCredits != null) {
-    const limit = totalCost + monthlyCredits;
-    windows.push({
-      key: "monthly",
-      label: "Monthly",
-      used: totalCost,
-      limit,
-      unit: "USD",
-      usedPercent: limit > 0 ? clampPercent((totalCost / limit) * 100) : 0,
-      resetAt: monthlyResetAt,
-    });
-  } else if (totalCost != null) {
-    windows.push({
-      key: "monthly",
-      label: "Monthly",
-      used: totalCost,
-      unit: "USD",
-      usedPercent: 0,
-      unavailableReason: "Remaining balance unavailable",
-    });
-  } else if (monthlyCredits != null) {
-    windows.push({
-      key: "monthly",
-      label: "Monthly",
-      unit: "USD",
-      usedPercent: 0,
-      unavailableReason: "Consumed cost unavailable",
-    });
-  }
-
   const balances: ProviderUsageSnapshot["balances"] = [];
+  const monthlyCredits = strictFinite(credits?.monthlyCredits);
+  const purchasedCredits = strictFinite(credits?.purchasedCredits) ?? 0;
   if (monthlyCredits != null) {
     balances.push({
       label: "Monthly remaining",
@@ -274,10 +217,10 @@ export function parseCommandCodeUsage(
     });
   }
 
-  const totalCount = toFinite(payloads.summary?.totalCount);
-  const totalTokens = toFinite(payloads.summary?.totalTokens);
-  const totalTokensIn = toFinite(payloads.summary?.totalTokensIn);
-  const totalTokensOut = toFinite(payloads.summary?.totalTokensOut);
+  const totalCount = strictFinite(payloads.summary?.totalCount);
+  const totalTokens = strictFinite(payloads.summary?.totalTokens);
+  const totalTokensIn = strictFinite(payloads.summary?.totalTokensIn);
+  const totalTokensOut = strictFinite(payloads.summary?.totalTokensOut);
   if (totalCount != null) {
     balances.push({ label: "Requests", remaining: totalCount, unit: "count" });
   }
@@ -310,7 +253,7 @@ export function parseCommandCodeUsage(
 }
 ```
 
-- [ ] **Step 4: Run the focused parser test and confirm it passes**
+- [ ] **Step 4: Run the focused test and confirm it passes**
 
 Run:
 
@@ -320,7 +263,7 @@ pnpm exec vitest run tests/provider-command-code.test.ts
 
 Expected: PASS, including the new parser case and all existing provider cases.
 
-- [ ] **Step 5: Add coercion, invalid-cap, and plan-name regression tests**
+- [ ] **Step 5: Add nested payload, coercion, cap, token, and plan regressions**
 
 Add these tests inside `describe("Command Code usage parser", ...)`:
 
@@ -340,70 +283,149 @@ it("parses nested string windows and supported reset formats", () => {
         },
       },
     },
-    subscription: { data: { planId: "individual-goat" } },
   });
 
-  expect(
-    parsed.windows.slice(0, 2).map((window) => window.usedPercent),
-  ).toEqual([25, 20]);
+  expect(parsed.windows.map((window) => window.usedPercent)).toEqual([25, 20]);
   expect(parsed.windows[0].resetAt).toBe(1_780_200_000_000);
   expect(parsed.windows[1].resetAt).toBe(Date.parse("2026-06-01T00:00:00Z"));
-  expect(parsed.planName).toBe("GOAT");
+  expect(parsed.balances).toContainEqual({
+    label: "Monthly remaining",
+    remaining: 7.25,
+    unit: "USD",
+  });
 });
+
+it.each(["0", 0, "-1", -1])(
+  "rejects non-positive numeric reset sentinel %j",
+  (resetAt) => {
+    const parsed = parseCommandCodeUsage({
+      credits: {
+        windowLimits: { fiveHour: { cap: 1, resetAt } },
+      },
+    });
+
+    expect(parsed.windows[0].resetAt).toBeUndefined();
+  },
+);
 
 it("omits invalid caps, defaults missing usage, and clamps overuse", () => {
   const parsed = parseCommandCodeUsage({
     credits: {
-      credits: {},
       windowLimits: {
         fiveHour: { cap: 3 },
         weekly: { cap: 0, used: 2 },
       },
     },
   });
-  expect(parsed.windows).toHaveLength(1);
-  expect(parsed.windows[0]).toMatchObject({
-    key: "fiveHour",
-    used: 0,
-    usedPercent: 0,
-  });
+  expect(parsed.windows).toEqual([
+    {
+      key: "fiveHour",
+      label: "5h",
+      usedPercent: 0,
+      resetAt: undefined,
+      windowDurationMins: 300,
+    },
+  ]);
 
   const overused = parseCommandCodeUsage({
     credits: {
-      credits: {},
       windowLimits: { fiveHour: { cap: 3, used: 4 } },
     },
   });
   expect(overused.windows[0].usedPercent).toBe(100);
+
+  const fractional = parseCommandCodeUsage({
+    credits: {
+      windowLimits: { fiveHour: { cap: 3, used: 1 } },
+    },
+  });
+  expect(fractional.windows[0].usedPercent).toBeCloseTo(100 / 3);
+
+  const negative = parseCommandCodeUsage({
+    credits: {
+      windowLimits: { fiveHour: { cap: 3, used: -1 } },
+    },
+  });
+  expect(negative.windows[0].usedPercent).toBe(0);
 });
 
-it("maps Pro v1 and preserves unknown plan IDs", () => {
+it("uses combined tokens before separate input and output totals", () => {
   expect(
     parseCommandCodeUsage({
-      subscription: { data: { planId: "individual-pro-v1" } },
-    }).planName,
-  ).toBe("Pro");
+      summary: { totalTokens: 30, totalTokensIn: 10, totalTokensOut: 20 },
+    }).balances,
+  ).toEqual([{ label: "Tokens", remaining: 30, unit: "tok" }]);
   expect(
     parseCommandCodeUsage({
-      subscription: { data: { planId: "team-future" } },
-    }).planName,
-  ).toBe("team-future");
+      summary: { totalTokensIn: 10, totalTokensOut: 20 },
+    }).balances,
+  ).toEqual([
+    { label: "Tokens in", remaining: 10, unit: "tok" },
+    { label: "Tokens out", remaining: 20, unit: "tok" },
+  ]);
+});
+
+it("ignores blank numeric fields and retains separate token totals", () => {
+  const parsed = parseCommandCodeUsage({
+    summary: {
+      totalCount: " ",
+      totalTokens: "",
+      totalTokensIn: 10,
+      totalTokensOut: 20,
+    },
+    credits: {
+      credits: { monthlyCredits: "", purchasedCredits: " " },
+    },
+  });
+
+  expect(parsed.balances).toEqual([
+    { label: "Tokens in", remaining: 10, unit: "tok" },
+    { label: "Tokens out", remaining: 20, unit: "tok" },
+  ]);
+});
+
+it.each([
+  ["individual-go", "Go"],
+  ["individual-goat", "GOAT"],
+  ["individual-pro", "Pro"],
+  ["individual-pro-v1", "Pro"],
+  ["individual-max", "Max"],
+  ["individual-ultra", "Ultra"],
+  ["team-future", "team-future"],
+])("maps plan %s to %s", (planId, expected) => {
+  expect(
+    parseCommandCodeUsage({ subscription: { data: { planId } } }).planName,
+  ).toBe(expected);
 });
 ```
 
-- [ ] **Step 6: Run the focused tests again**
+- [ ] **Step 6: Run focused tests, type checking, and the full project check**
 
 Run:
 
 ```bash
 pnpm exec vitest run tests/provider-command-code.test.ts
+pnpm typecheck
+pnpm check
 ```
 
-Expected: PASS with all parser and existing integration cases green.
+Expected: all commands exit 0 on Node.js `>=24.15.0`. The full check runs Biome lint, TypeScript compilation, and every Vitest suite.
 
-- [ ] **Step 7: Commit the pure parser**
+- [ ] **Step 7: Review the Phase 1 diff**
+
+Run:
 
 ```bash
-git add src/providers/command-code/usage-parser.ts tests/provider-command-code.test.ts
+git diff --check
+git status --short
+git diff -- src/providers/command-code/usage-parser.ts tests/provider-command-code.test.ts
+```
+
+Expected: `git diff --check` exits 0; Phase 1 changes only the parser and Command Code test file, in addition to the already-updated planning documents.
+
+- [ ] **Step 8: Commit the pure parser**
+
+```bash
+git add src/providers/command-code/usage-parser.ts tests/provider-command-code.test.ts docs/superpowers/specs/2026-08-30-command-code-usage-refactor-design.md docs/superpowers/plans/2026-08-30-command-code-usage-refactor.md docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-1-usage-parser.md docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-2-provider-integration.md
 git commit -m "feat(command-code): parse rolling usage windows"
 ```

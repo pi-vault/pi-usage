@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Connect the Phase 1 parser to a split Command Code API client and provider adapter, delivering live 5-hour, weekly, and monthly usage windows.
+**Goal:** Connect the Phase 1 parser to a split Command Code API client and provider adapter, delivering live 5-hour and weekly windows with existing balance data.
 
 **Architecture:** Move cookie and HTTP concerns into a provider-local API client, then replace the monolithic provider with a thin directory entrypoint that composes the client, parser, and existing live cache runtime. Preserve partial endpoint success and the current rate-limit, credential, and cache behavior.
 
@@ -12,7 +12,7 @@
 
 **Parent Plan:** `docs/superpowers/plans/2026-08-30-command-code-usage-refactor.md`
 
-**Prerequisite:** Complete `docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-1-usage-parser.md`; `parseCommandCodeUsage()` and its exported payload/result types must exist with Phase 1 tests passing.
+**Prerequisite:** Complete `docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-1-usage-parser.md`; `parseCommandCodeUsage()` and its exported payload type must exist with Phase 1 tests passing.
 
 **Atomic Result:** The provider registry uses the split Command Code adapter, live snapshots expose all available quota windows, partial failures retain usable data, and the complete project check passes.
 
@@ -22,7 +22,8 @@
 - Keep Node.js support at `>=24.15.0`.
 - Add no dependencies, public exports, shared usage types, environment variables, local estimates, or static plan-price catalog.
 - Preserve the existing `COMMAND_CODE_COOKIE_HEADER` configuration, provider cache/backoff behavior, request/token balances, and partial-success behavior.
-- Purchased credits remain a balance and never increase the monthly included-credit limit.
+- Preserve monthly and purchased credits as balances; do not synthesize a monthly usage window.
+- Rolling windows expose percentages and reset timing, not currency-valued ratios.
 
 ---
 
@@ -63,7 +64,7 @@ export function createCommandCodeProvider(
 ): UsageProviderAdapter;
 ```
 
-- [ ] **Step 1: Update the integration test to require all three windows**
+- [ ] **Step 1: Update the integration test to require both rolling windows and balances**
 
 In the existing `uses cookie auth and parses aggregate usage` test, return rolling limits with the credits payload and make purchased credits nonzero:
 
@@ -88,9 +89,12 @@ Replace the old current-cycle assertions with:
 expect(snapshot.windows.map((window) => [window.key, window.label])).toEqual([
   ["fiveHour", "5h"],
   ["weekly", "Weekly"],
-  ["monthly", "Monthly"],
 ]);
-expect(snapshot.windows[2].limit).toBeCloseTo(10);
+expect(snapshot.balances).toContainEqual({
+  label: "Monthly remaining",
+  remaining: 5.7112,
+  unit: "USD",
+});
 expect(snapshot.balances).toContainEqual({
   label: "Purchased remaining",
   remaining: 5,
@@ -108,7 +112,7 @@ Run:
 pnpm exec vitest run tests/provider-command-code.test.ts
 ```
 
-Expected: FAIL because the old adapter emits only `current-cycle` and includes purchased credits in that limit.
+Expected: FAIL because the old adapter emits only `current-cycle` and does not emit the rolling windows.
 
 - [ ] **Step 3: Move cookie and HTTP behavior into the API client**
 
@@ -330,7 +334,7 @@ Run:
 pnpm exec vitest run tests/provider-command-code.test.ts
 ```
 
-Expected: PASS. The integration snapshot contains `fiveHour`, `weekly`, and `monthly`; its monthly limit remains approximately 10 despite five purchased credits.
+Expected: PASS. The integration snapshot contains only `fiveHour` and `weekly` windows, plus separate monthly and purchased balances.
 
 - [ ] **Step 6: Add a partial-failure integration regression**
 
@@ -366,11 +370,12 @@ it("keeps rolling limits when summary and subscription fail", async () => {
   expect(snapshot.windows.map((window) => window.key)).toEqual([
     "fiveHour",
     "weekly",
-    "monthly",
   ]);
-  expect(snapshot.windows[2].unavailableReason).toBe(
-    "Consumed cost unavailable",
-  );
+  expect(snapshot.balances).toContainEqual({
+    label: "Monthly remaining",
+    remaining: 6,
+    unit: "USD",
+  });
   expect(snapshot.diagnostics).toEqual(
     expect.arrayContaining([
       "Summary endpoint unavailable.",
@@ -408,6 +413,6 @@ Expected: `git diff --check` exits 0; only the planned provider, registry, test,
 - [ ] **Step 9: Commit the provider split and integration**
 
 ```bash
-git add src/providers/command-code.ts src/providers/command-code src/providers/index.ts tests/provider-command-code.test.ts docs/superpowers/specs/2026-08-30-command-code-usage-refactor-design.md docs/superpowers/plans/2026-08-30-command-code-usage-refactor.md
+git add src/providers/command-code.ts src/providers/command-code src/providers/index.ts tests/provider-command-code.test.ts
 git commit -m "refactor(command-code): expose usage limit windows"
 ```
