@@ -38,6 +38,18 @@ describe("provider detection", () => {
       detectProviderFromModel({ provider: "minimax", id: "anything" }),
     ).toBe("minimax");
     expect(
+      detectProviderFromModel({
+        provider: "minimax-openai",
+        id: "MiniMax-M3",
+      }),
+    ).toBe("minimax");
+    expect(
+      detectProviderFromModel({
+        provider: "custom-proxy",
+        id: "MiniMax-M3",
+      }),
+    ).toBeUndefined();
+    expect(
       detectProviderFromModel({ provider: "opencode-go", id: "anything" }),
     ).toBe("opencode-go");
     expect(
