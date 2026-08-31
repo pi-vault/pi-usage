@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor the Command Code provider into three focused modules and publish its reliable 5-hour and weekly limits with existing balance data.
+**Goal:** Refactor the Command Code provider into two focused modules and publish its reliable 5-hour and weekly limits with existing balance data.
 
-**Architecture:** A pure parser converts Command Code JSON payloads into rolling windows, balances, and a plan name. A provider-local API client owns authentication and endpoint behavior, while a thin directory entrypoint connects both pieces to the existing live cache runtime. The phase plans below are authoritative and intentionally avoid duplicating their implementation steps here.
+**Architecture:** A pure parser converts Command Code JSON payloads into rolling windows, balances, and a plan name. The existing provider entrypoint keeps authentication, endpoint, cache-runtime, and error-classification behavior and delegates payload interpretation to that parser. The phase plans below are authoritative and intentionally avoid duplicating their implementation steps here.
 
 **Tech Stack:** TypeScript 6, Node.js `>=24.15.0`, native Fetch API, Vitest 4, pnpm 11, Biome.
 
@@ -31,13 +31,13 @@
 - [ ] Confirm `pnpm exec vitest run tests/provider-command-code.test.ts` passes.
 - [ ] Confirm the Phase 1 commit exists before starting Phase 2.
 
-### Phase 2: Split and Integrate the Provider
+### Phase 2: Integrate the Parser with the Provider
 
 **Plan:** `docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-2-provider-integration.md`
 
 **Prerequisite:** Phase 1 is complete and its focused tests pass.
 
-**Atomic Result:** The registry uses the split provider, snapshots expose available rolling windows and balances, partial failures retain usable data, and the complete project check passes.
+**Atomic Result:** The existing provider uses the parser, snapshots expose available rolling windows and balances, partial failures retain usable data, and the complete project check passes.
 
 - [ ] Execute every Phase 2 checkbox in order.
 - [ ] Confirm `pnpm exec vitest run tests/provider-command-code.test.ts` passes.
