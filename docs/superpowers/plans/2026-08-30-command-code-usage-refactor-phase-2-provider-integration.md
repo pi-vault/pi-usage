@@ -12,7 +12,7 @@
 
 **Parent Plan:** `docs/superpowers/plans/2026-08-30-command-code-usage-refactor.md`
 
-**Prerequisite:** Complete `docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-1-usage-parser.md`; `parseCommandCodeUsage()` and its exported payload/result types must exist with Phase 1 tests passing.
+**Prerequisite:** Complete `docs/superpowers/plans/2026-08-30-command-code-usage-refactor-phase-1-usage-parser.md`; `parseCommandCodeUsage()` and its exported payload type must exist with Phase 1 tests passing.
 
 **Atomic Result:** The provider registry uses the split Command Code adapter, live snapshots expose all available quota windows, partial failures retain usable data, and the complete project check passes.
 

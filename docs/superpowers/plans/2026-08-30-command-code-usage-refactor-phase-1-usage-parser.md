@@ -45,14 +45,9 @@ export interface CommandCodePayloads {
   subscription?: Record<string, unknown>;
 }
 
-export type ParsedCommandCodeUsage = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "balances" | "planName"
->;
-
 export function parseCommandCodeUsage(
   payloads: CommandCodePayloads,
-): ParsedCommandCodeUsage;
+): Pick<ProviderUsageSnapshot, "windows" | "balances" | "planName">;
 ```
 
 - [ ] **Step 1: Add the failing root-payload parser test**
@@ -96,9 +91,6 @@ describe("Command Code usage parser", () => {
         windowDurationMins: 10_080,
       },
     ]);
-    expect(parsed.windows.some((window) => window.key === "monthly")).toBe(
-      false,
-    );
     expect(parsed.balances).toEqual([
       { label: "Monthly remaining", remaining: 6, unit: "USD" },
       { label: "Purchased remaining", remaining: 5, unit: "USD" },
@@ -137,11 +129,6 @@ export interface CommandCodePayloads {
   subscription?: Record<string, unknown>;
 }
 
-export type ParsedCommandCodeUsage = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "balances" | "planName"
->;
-
 const PLAN_NAMES: Record<string, string> = {
   "individual-go": "Go",
   "individual-goat": "GOAT",
@@ -157,9 +144,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function strictFinite(value: unknown): number | undefined {
+  return typeof value === "string" && !value.trim() ? undefined : toFinite(value);
+}
+
 function parseTimestamp(value: unknown): number | undefined {
-  const epoch = parseEpochMs(value);
-  if (epoch != null) return epoch;
+  const numeric = strictFinite(value);
+  if (numeric != null) return numeric > 0 ? parseEpochMs(numeric) : undefined;
   if (typeof value !== "string") return undefined;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -172,9 +163,9 @@ function parseRateWindow(
   windowDurationMins: number,
 ): LiveUsageWindow | undefined {
   const record = asRecord(value);
-  const limit = toFinite(record?.cap);
+  const limit = strictFinite(record?.cap);
   if (limit == null || limit <= 0) return undefined;
-  const used = toFinite(record?.used) ?? 0;
+  const used = strictFinite(record?.used) ?? 0;
   return {
     key,
     label,
@@ -186,7 +177,7 @@ function parseRateWindow(
 
 export function parseCommandCodeUsage(
   payloads: CommandCodePayloads,
-): ParsedCommandCodeUsage {
+): Pick<ProviderUsageSnapshot, "windows" | "balances" | "planName"> {
   const credits = asRecord(payloads.credits?.credits);
   const windowLimits =
     asRecord(payloads.credits?.windowLimits) ?? asRecord(credits?.windowLimits);
@@ -209,8 +200,8 @@ export function parseCommandCodeUsage(
   if (weekly) windows.push(weekly);
 
   const balances: ProviderUsageSnapshot["balances"] = [];
-  const monthlyCredits = toFinite(credits?.monthlyCredits);
-  const purchasedCredits = toFinite(credits?.purchasedCredits) ?? 0;
+  const monthlyCredits = strictFinite(credits?.monthlyCredits);
+  const purchasedCredits = strictFinite(credits?.purchasedCredits) ?? 0;
   if (monthlyCredits != null) {
     balances.push({
       label: "Monthly remaining",
@@ -226,10 +217,10 @@ export function parseCommandCodeUsage(
     });
   }
 
-  const totalCount = toFinite(payloads.summary?.totalCount);
-  const totalTokens = toFinite(payloads.summary?.totalTokens);
-  const totalTokensIn = toFinite(payloads.summary?.totalTokensIn);
-  const totalTokensOut = toFinite(payloads.summary?.totalTokensOut);
+  const totalCount = strictFinite(payloads.summary?.totalCount);
+  const totalTokens = strictFinite(payloads.summary?.totalTokens);
+  const totalTokensIn = strictFinite(payloads.summary?.totalTokensIn);
+  const totalTokensOut = strictFinite(payloads.summary?.totalTokensOut);
   if (totalCount != null) {
     balances.push({ label: "Requests", remaining: totalCount, unit: "count" });
   }
@@ -304,10 +295,22 @@ it("parses nested string windows and supported reset formats", () => {
   });
 });
 
+it.each(["0", 0, "-1", -1])(
+  "rejects non-positive numeric reset sentinel %j",
+  (resetAt) => {
+    const parsed = parseCommandCodeUsage({
+      credits: {
+        windowLimits: { fiveHour: { cap: 1, resetAt } },
+      },
+    });
+
+    expect(parsed.windows[0].resetAt).toBeUndefined();
+  },
+);
+
 it("omits invalid caps, defaults missing usage, and clamps overuse", () => {
   const parsed = parseCommandCodeUsage({
     credits: {
-      credits: {},
       windowLimits: {
         fiveHour: { cap: 3 },
         weekly: { cap: 0, used: 2 },
@@ -326,11 +329,24 @@ it("omits invalid caps, defaults missing usage, and clamps overuse", () => {
 
   const overused = parseCommandCodeUsage({
     credits: {
-      credits: {},
       windowLimits: { fiveHour: { cap: 3, used: 4 } },
     },
   });
   expect(overused.windows[0].usedPercent).toBe(100);
+
+  const fractional = parseCommandCodeUsage({
+    credits: {
+      windowLimits: { fiveHour: { cap: 3, used: 1 } },
+    },
+  });
+  expect(fractional.windows[0].usedPercent).toBeCloseTo(100 / 3);
+
+  const negative = parseCommandCodeUsage({
+    credits: {
+      windowLimits: { fiveHour: { cap: 3, used: -1 } },
+    },
+  });
+  expect(negative.windows[0].usedPercent).toBe(0);
 });
 
 it("uses combined tokens before separate input and output totals", () => {
@@ -344,6 +360,25 @@ it("uses combined tokens before separate input and output totals", () => {
       summary: { totalTokensIn: 10, totalTokensOut: 20 },
     }).balances,
   ).toEqual([
+    { label: "Tokens in", remaining: 10, unit: "tok" },
+    { label: "Tokens out", remaining: 20, unit: "tok" },
+  ]);
+});
+
+it("ignores blank numeric fields and retains separate token totals", () => {
+  const parsed = parseCommandCodeUsage({
+    summary: {
+      totalCount: " ",
+      totalTokens: "",
+      totalTokensIn: 10,
+      totalTokensOut: 20,
+    },
+    credits: {
+      credits: { monthlyCredits: "", purchasedCredits: " " },
+    },
+  });
+
+  expect(parsed.balances).toEqual([
     { label: "Tokens in", remaining: 10, unit: "tok" },
     { label: "Tokens out", remaining: 20, unit: "tok" },
   ]);
