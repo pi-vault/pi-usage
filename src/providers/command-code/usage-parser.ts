@@ -1,7 +1,4 @@
-import type {
-  LiveUsageWindow,
-  ProviderUsageSnapshot,
-} from "../../shared/types.ts";
+import type { LiveUsageWindow, ProviderUsageSnapshot } from "../../shared/types.ts";
 import { clampPercent, parseEpochMs, toFinite } from "../runtime.ts";
 
 export interface CommandCodePayloads {
@@ -9,11 +6,6 @@ export interface CommandCodePayloads {
   credits?: Record<string, unknown>;
   subscription?: Record<string, unknown>;
 }
-
-export type ParsedCommandCodeUsage = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "balances" | "planName"
->;
 
 const PLAN_NAMES: Record<string, string> = {
   "individual-go": "Go",
@@ -30,9 +22,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function strictFinite(value: unknown): number | undefined {
+  return typeof value === "string" && !value.trim() ? undefined : toFinite(value);
+}
+
 function parseTimestamp(value: unknown): number | undefined {
-  const epoch = parseEpochMs(value);
-  if (epoch != null) return epoch;
+  const numeric = strictFinite(value);
+  if (numeric != null) return numeric > 0 ? parseEpochMs(numeric) : undefined;
   if (typeof value !== "string") return undefined;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -45,9 +41,9 @@ function parseRateWindow(
   windowDurationMins: number,
 ): LiveUsageWindow | undefined {
   const record = asRecord(value);
-  const limit = toFinite(record?.cap);
+  const limit = strictFinite(record?.cap);
   if (limit == null || limit <= 0) return undefined;
-  const used = toFinite(record?.used) ?? 0;
+  const used = strictFinite(record?.used) ?? 0;
   return {
     key,
     label,
@@ -59,31 +55,20 @@ function parseRateWindow(
 
 export function parseCommandCodeUsage(
   payloads: CommandCodePayloads,
-): ParsedCommandCodeUsage {
+): Pick<ProviderUsageSnapshot, "windows" | "balances" | "planName"> {
   const credits = asRecord(payloads.credits?.credits);
-  const windowLimits =
-    asRecord(payloads.credits?.windowLimits) ?? asRecord(credits?.windowLimits);
+  const windowLimits = asRecord(payloads.credits?.windowLimits) ?? asRecord(credits?.windowLimits);
   const subscription = asRecord(payloads.subscription?.data);
 
   const windows: LiveUsageWindow[] = [];
-  const fiveHour = parseRateWindow(
-    windowLimits?.fiveHour,
-    "fiveHour",
-    "5h",
-    5 * 60,
-  );
-  const weekly = parseRateWindow(
-    windowLimits?.weekly,
-    "weekly",
-    "Weekly",
-    7 * 24 * 60,
-  );
+  const fiveHour = parseRateWindow(windowLimits?.fiveHour, "fiveHour", "5h", 5 * 60);
+  const weekly = parseRateWindow(windowLimits?.weekly, "weekly", "Weekly", 7 * 24 * 60);
   if (fiveHour) windows.push(fiveHour);
   if (weekly) windows.push(weekly);
 
   const balances: ProviderUsageSnapshot["balances"] = [];
-  const monthlyCredits = toFinite(credits?.monthlyCredits);
-  const purchasedCredits = toFinite(credits?.purchasedCredits) ?? 0;
+  const monthlyCredits = strictFinite(credits?.monthlyCredits);
+  const purchasedCredits = strictFinite(credits?.purchasedCredits) ?? 0;
   if (monthlyCredits != null) {
     balances.push({
       label: "Monthly remaining",
@@ -99,10 +84,10 @@ export function parseCommandCodeUsage(
     });
   }
 
-  const totalCount = toFinite(payloads.summary?.totalCount);
-  const totalTokens = toFinite(payloads.summary?.totalTokens);
-  const totalTokensIn = toFinite(payloads.summary?.totalTokensIn);
-  const totalTokensOut = toFinite(payloads.summary?.totalTokensOut);
+  const totalCount = strictFinite(payloads.summary?.totalCount);
+  const totalTokens = strictFinite(payloads.summary?.totalTokens);
+  const totalTokensIn = strictFinite(payloads.summary?.totalTokensIn);
+  const totalTokensOut = strictFinite(payloads.summary?.totalTokensOut);
   if (totalCount != null) {
     balances.push({ label: "Requests", remaining: totalCount, unit: "count" });
   }
@@ -125,8 +110,7 @@ export function parseCommandCodeUsage(
     }
   }
 
-  const planId =
-    typeof subscription?.planId === "string" ? subscription.planId : undefined;
+  const planId = typeof subscription?.planId === "string" ? subscription.planId : undefined;
   return {
     windows,
     balances,
