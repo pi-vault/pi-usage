@@ -11,7 +11,7 @@ export function detectProviderFromModel(
 	if (!model) return undefined;
 	const p = (model.provider ?? "").trim().toLowerCase();
 	if (p === "openai-codex") return "openai-codex";
-	if (p === "minimax") return "minimax";
+	if (p === "minimax" || p === "minimax-openai") return "minimax";
 	if (p === "stepfun") return "stepfun";
 	if (p === "opencode-go") return "opencode-go";
 	if (p === "command-code" || p === "commandcode") return "command-code";
